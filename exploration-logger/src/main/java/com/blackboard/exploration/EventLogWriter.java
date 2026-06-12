@@ -12,6 +12,8 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+import static com.blackboard.constant.RedisKeys.*;
+
 /**
  * 探索事件日志写入器 —— 订阅 UpdateView 广播，将事件格式化后写入 Redis 日志
  */
@@ -183,7 +185,7 @@ public class EventLogWriter {
      * 根据视野半径计算本次移动新点亮的格子数
      */
     private int computeNewCells(String carId, int newX, int newY) {
-        int radius = RedisKeys.VISION_RANGE;
+        int radius = VISION_RANGE;
         Set<String> newVision = visionCells(newX, newY, radius);
 
         int[] last = lastPositions.get(carId);
@@ -203,7 +205,7 @@ public class EventLogWriter {
             for (int dc = -radius; dc <= radius; dc++) {
                 int row = y + dr;
                 int col = x + dc;
-                if (row >= 0 && row < RedisKeys.MAP_HEIGHT && col >= 0 && col < RedisKeys.MAP_WIDTH) {
+                if (row >= 0 && row < RedisKeys.DEFAULT_MAP_HEIGHT && col >= 0 && col < RedisKeys.DEFAULT_MAP_WIDTH) {
                     cells.add(row + "," + col);
                 }
             }
