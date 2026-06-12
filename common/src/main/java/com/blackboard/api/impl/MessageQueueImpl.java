@@ -264,10 +264,10 @@ public class MessageQueueImpl implements MessageQueue {
     // ==================== 通用订阅 ====================
     private void subscribe(String queueName, MessageListener listener) {
         try {
+            // 确保队列存在（如果不存在则创建）
+            channel.queueDeclare(queueName, true, false, false, null);
             DeliverCallback deliverCallback = (consumerTag, delivery) -> {
                 String message = new String(delivery.getBody(), "UTF-8");
-                // 注意：这里仍然传递原始 JSON 字符串，由监听器自行解析。
-                // 如需自动反序列化为 Message 对象，可修改 MessageListener 接口，但为了兼容性暂不修改。
                 listener.onMessage(message);
             };
             channel.basicConsume(queueName, true, deliverCallback, consumerTag -> {});

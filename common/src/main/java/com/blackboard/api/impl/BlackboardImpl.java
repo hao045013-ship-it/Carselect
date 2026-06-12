@@ -477,7 +477,9 @@ public class BlackboardImpl implements Blackboard {
     @Override
     public void setTaskConfig(Map<String, String> config) {
         try (Jedis jedis = getJedis()) {
-            jedis.hset(RedisKeys.TASK_CONFIG, config);
+            for (Map.Entry<String, String> entry : config.entrySet()) {
+                jedis.hset(RedisKeys.TASK_CONFIG, entry.getKey(), entry.getValue());
+            }
         }
     }
 
