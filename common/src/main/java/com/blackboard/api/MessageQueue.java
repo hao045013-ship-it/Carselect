@@ -42,5 +42,8 @@ public interface MessageQueue {
     void subscribeRegistry(MessageListener listener);
 
     // ==================== 工具方法 ====================
-    void sendCommand(String cmd, String dataJson);
+    void sendCommand(String cmd, Map<String, Object> data);
+    void declareCarQueue(String carId);
+    void addCar(String carId, int x, int y);
+    void loadMapFile(int[][] mapData, int mapWidth, int mapHeight);
 }

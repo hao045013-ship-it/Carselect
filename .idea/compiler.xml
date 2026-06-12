@@ -22,21 +22,8 @@
     </annotationProcessing>
   </component>
   <component name="JavacSettings">
-    <option name="ADDITIONAL_OPTIONS_STRING" value="-parameters" />
     <option name="ADDITIONAL_OPTIONS_OVERRIDE">
-      <module name="blackboard-system" options="" />
-      <module name="car" options="" />
-      <module name="common" options="" />
-      <module name="controller" options="" />
-      <module name="display" options="" />
       <module name="exploration-logger" options="-parameters" />
-      <module name="launcher" options="" />
-      <module name="navigator" options="" />
-      <module name="registry" options="" />
-      <module name="replay-logger" options="" />
-      <module name="stats-reporter" options="" />
-      <module name="target-planner" options="" />
-      <module name="task-configurator" options="" />
     </option>
   </component>
 </project>

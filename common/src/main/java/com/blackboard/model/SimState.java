@@ -11,19 +11,39 @@ public class SimState {
     private int mapWidth;
     private int mapHeight;
     private boolean[] mapView;
-    private boolean[] mapBlock;
+    private boolean[] staticBlock;
+    private boolean[] dynamicBlock;
     private double exploredPercent;
     private long tick;
     private Map<String, CarInfo> cars;
+    private String statsReport;
+    private List<String> coverageHistory;
 
+    public String getStatsReport() { return statsReport; }
+    public void setStatsReport(String statsReport) { this.statsReport = statsReport; }
+    public List<String> getCoverageHistory() { return coverageHistory; }
+    public void setCoverageHistory(List<String> coverageHistory) { this.coverageHistory = coverageHistory; }
     public int getMapWidth() { return mapWidth; }
     public void setMapWidth(int mapWidth) { this.mapWidth = mapWidth; }
     public int getMapHeight() { return mapHeight; }
     public void setMapHeight(int mapHeight) { this.mapHeight = mapHeight; }
     public boolean[] getMapView() { return mapView; }
     public void setMapView(boolean[] mapView) { this.mapView = mapView; }
-    public boolean[] getMapBlock() { return mapBlock; }
-    public void setMapBlock(boolean[] mapBlock) { this.mapBlock = mapBlock; }
+    public boolean[] getStaticBlock() {
+        return staticBlock;
+    }
+
+    public void setStaticBlock(boolean[] staticBlock) {
+        this.staticBlock = staticBlock;
+    }
+
+    public boolean[] getDynamicBlock() {
+        return dynamicBlock;
+    }
+
+    public void setDynamicBlock(boolean[] dynamicBlock) {
+        this.dynamicBlock = dynamicBlock;
+    }
     public double getExploredPercent() { return exploredPercent; }
     public void setExploredPercent(double exploredPercent) { this.exploredPercent = exploredPercent; }
     public long getTick() { return tick; }

@@ -8,6 +8,46 @@ import java.util.Map;
  * 实现类由组长（人1）编写，其他人依赖此接口开发
  */
 public interface Blackboard {
+    // ==================== 地图尺寸 ====================
+    int getMapWidth();
+    int getMapHeight();
+    // ==================== 节拍 ====================
+    long getCurrentTick();
+    void setCurrentTick(long tick);
+
+    // ==================== 静态障碍物 ====================
+    void setStaticBlock(int row, int col, boolean value);
+    boolean hasStaticBlock(int row, int col);
+    boolean[] getFullStaticBlock();
+    void randomStaticBlocks(double density);
+    void clearStaticBlocks();
+
+    // ==================== 动态障碍物，小车占位 ====================
+    void setDynamicBlock(int row, int col, boolean value);
+    boolean hasDynamicBlock(int row, int col);
+    boolean[] getFullDynamicBlock();
+
+    // ==================== 综合障碍判断 ====================
+    boolean hasBlock(int row, int col);
+
+    // ==================== 车辆列表 ====================
+    void addCar(String carId);
+    void removeCar(String carId);
+    List<String> getCarList();
+    boolean carExists(String carId);
+
+
+    // ==================== 轨迹回放 ====================
+    void appendTrace(String carId, long tick, int x, int y);
+    List<String> getTrace(String carId);
+
+    // ==================== 统计 ====================
+    void incrementBlockedCount(String carId);
+    int getBlockedCount(String carId);
+    void incrementRoutePlanCount(String carId);
+    int getRoutePlanCount(String carId);
+    void saveCoverageHistory(long tick, double coverage);
+    List<String> getCoverageHistory();
 
     // ==================== 地图视野 ====================
     void exploreCell(int row, int col);
@@ -36,7 +76,7 @@ public interface Blackboard {
     String peekRoute(String carId);
     void clearRoute(String carId);
     long getRouteLength(String carId);
-
+    List<String> getRouteList(String carId);
     // ==================== 状态 ====================
     void setStatus(String carId, String status);
     String getStatus(String carId);

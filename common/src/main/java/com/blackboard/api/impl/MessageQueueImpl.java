@@ -1,17 +1,26 @@
 package com.blackboard.api.impl;
 
+import com.alibaba.fastjson2.JSON;
 import com.blackboard.api.MessageListener;
 import com.blackboard.api.MessageQueue;
 import com.blackboard.constant.MQKeys;
+import com.blackboard.model.Message;
 import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.Connection;
 import com.rabbitmq.client.ConnectionFactory;
 import com.rabbitmq.client.DeliverCallback;
 
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
 
 /**
  * 消息队列实现类 —— 封装所有 RabbitMQ 操作
+ *
+ * 修改说明：
+ * 1. 引入 fastjson2 和 Message 类，使用 buildMessage(cmd, Object data) 统一构建 JSON
+ * 2. 所有发送消息的方法改为传入 Map 或简单对象作为 data，不再手动拼接 JSON 字符串
+ * 3. 提高代码可读性、可维护性，避免手动拼接导致的转义错误
  *
  * 人1开发，其他人通过 MessageQueue 接口使用
  */
@@ -94,85 +103,117 @@ public class MessageQueueImpl implements MessageQueue {
         }
     }
 
-    private String buildMessage(String cmd, String dataJson) {
-        return "{\"cmd\":\"" + cmd + "\",\"data\":" + dataJson + ",\"timestamp\":" + System.currentTimeMillis() + "}";
+    /**
+     * 构建消息 JSON
+     * @param cmd  命令类型
+     * @param data 数据对象（可以是 Map、POJO、String 等）
+     * @return 序列化后的 JSON 字符串
+     */
+    private String buildMessage(String cmd, Object data) {
+        return JSON.toJSONString(new Message(cmd, data));
     }
 
     // ==================== Controller → 知识源 ====================
+
     @Override
     public void sendTickMove(String carId) {
-        publish(MQKeys.carQueue(carId), buildMessage(MQKeys.CMD_TICK_MOVE, "{}"));
+        // 没有额外数据，使用空 Map
+        publish(MQKeys.carQueue(carId), buildMessage(MQKeys.CMD_TICK_MOVE, Collections.emptyMap()));
     }
 
     @Override
     public void assignTarget(String carId) {
-        publish(MQKeys.TARGET_PLANNER_CMD, buildMessage(MQKeys.CMD_ASSIGN_TARGET, "{\"carId\":\"" + carId + "\"}"));
+        Map<String, Object> data = new HashMap<>();
+        data.put("carId", carId);
+        publish(MQKeys.TARGET_PLANNER_CMD, buildMessage(MQKeys.CMD_ASSIGN_TARGET, data));
     }
 
     @Override
     public void planRoute(String carId, String algorithm) {
-        publish(MQKeys.NAVIGATOR_CMD, buildMessage(MQKeys.CMD_PLAN_ROUTE, "{\"carId\":\"" + carId + "\",\"algorithm\":\"" + algorithm + "\"}"));
+        Map<String, Object> data = new HashMap<>();
+        data.put("carId", carId);
+        data.put("algorithm", algorithm);
+        publish(MQKeys.NAVIGATOR_CMD, buildMessage(MQKeys.CMD_PLAN_ROUTE, data));
     }
 
     @Override
     public void forwardConfig(Map<String, String> config) {
-        StringBuilder sb = new StringBuilder("{");
-        for (Map.Entry<String, String> e : config.entrySet()) {
-            if (sb.length() > 1) sb.append(",");
-            sb.append("\"").append(e.getKey()).append("\":\"").append(e.getValue()).append("\"");
-        }
-        sb.append("}");
-        publish(MQKeys.TASK_CONFIG_CMD, buildMessage(MQKeys.CMD_FORWARD_CONFIG, sb.toString()));
+        // config 本身就是一个 Map，可以直接作为 data
+        publish(MQKeys.TASK_CONFIG_CMD, buildMessage(MQKeys.CMD_FORWARD_CONFIG, config));
     }
 
     @Override
     public void forwardReset() {
-        publish(MQKeys.TASK_CONFIG_CMD, buildMessage(MQKeys.CMD_FORWARD_RESET, "{}"));
+        // 无数据，使用空 Map
+        publish(MQKeys.TASK_CONFIG_CMD, buildMessage(MQKeys.CMD_FORWARD_RESET, Collections.emptyMap()));
     }
 
     // ==================== 知识源 → Controller ====================
+
     @Override
     public void replyTaskReady(int carCount, int mapWidth, int mapHeight) {
-        String data = "{\"carCount\":" + carCount + ",\"mapWidth\":" + mapWidth + ",\"mapHeight\":" + mapHeight + "}";
+        Map<String, Object> data = new HashMap<>();
+        data.put("carCount", carCount);
+        data.put("mapWidth", mapWidth);
+        data.put("mapHeight", mapHeight);
         publish(MQKeys.CONTROLLER_CMD, buildMessage(MQKeys.CMD_TASK_READY, data));
     }
 
     @Override
     public void replyTargetAssigned(String jsonArray) {
+        // jsonArray 是已经序列化好的 JSON 数组字符串，直接作为 data
         publish(MQKeys.CONTROLLER_CMD, buildMessage(MQKeys.CMD_TARGET_ASSIGNED, jsonArray));
     }
 
     @Override
     public void replyRoutePlanned(String carId, boolean routeFound, int routeLength) {
-        String data = "{\"carId\":\"" + carId + "\",\"routeFound\":" + routeFound + ",\"routeLength\":" + routeLength + "}";
+        Map<String, Object> data = new HashMap<>();
+        data.put("carId", carId);
+        data.put("routeFound", routeFound);
+        data.put("routeLength", routeLength);
         publish(MQKeys.CONTROLLER_CMD, buildMessage(MQKeys.CMD_ROUTE_PLANNED, data));
     }
 
     @Override
     public void replyMoved(String carId, int x, int y) {
-        String data = "{\"carId\":\"" + carId + "\",\"x\":" + x + ",\"y\":" + y + "}";
+        Map<String, Object> data = new HashMap<>();
+        data.put("carId", carId);
+        data.put("x", x);
+        data.put("y", y);
         publish(MQKeys.CONTROLLER_CMD, buildMessage(MQKeys.CMD_MOVED, data));
     }
 
     @Override
     public void replyBlocked(String carId, int x, int y, int blockedX, int blockedY) {
-        String data = "{\"carId\":\"" + carId + "\",\"x\":" + x + ",\"y\":" + y + ",\"blockedX\":" + blockedX + ",\"blockedY\":" + blockedY + "}";
+        Map<String, Object> data = new HashMap<>();
+        data.put("carId", carId);
+        data.put("x", x);
+        data.put("y", y);
+        data.put("blockedX", blockedX);
+        data.put("blockedY", blockedY);
         publish(MQKeys.CONTROLLER_CMD, buildMessage(MQKeys.CMD_BLOCKED, data));
     }
 
     @Override
     public void replyRouteDone(String carId, int x, int y) {
-        String data = "{\"carId\":\"" + carId + "\",\"x\":" + x + ",\"y\":" + y + "}";
+        Map<String, Object> data = new HashMap<>();
+        data.put("carId", carId);
+        data.put("x", x);
+        data.put("y", y);
         publish(MQKeys.CONTROLLER_CMD, buildMessage(MQKeys.CMD_ROUTE_DONE, data));
     }
 
     // ==================== 广播 ====================
+
     @Override
     public void broadcastRefreshAll(long tick) {
-        publishToExchange(MQKeys.EXCHANGE_UPDATE_VIEW, buildMessage(MQKeys.CMD_REFRESH_ALL, "{\"tick\":" + tick + "}"));
+        Map<String, Object> data = new HashMap<>();
+        data.put("tick", tick);
+        publishToExchange(MQKeys.EXCHANGE_UPDATE_VIEW, buildMessage(MQKeys.CMD_REFRESH_ALL, data));
     }
 
     // ==================== 订阅 ====================
+
     @Override
     public void subscribeController(MessageListener listener) {
         subscribe(MQKeys.CONTROLLER_CMD, listener);
@@ -225,6 +266,8 @@ public class MessageQueueImpl implements MessageQueue {
         try {
             DeliverCallback deliverCallback = (consumerTag, delivery) -> {
                 String message = new String(delivery.getBody(), "UTF-8");
+                // 注意：这里仍然传递原始 JSON 字符串，由监听器自行解析。
+                // 如需自动反序列化为 Message 对象，可修改 MessageListener 接口，但为了兼容性暂不修改。
                 listener.onMessage(message);
             };
             channel.basicConsume(queueName, true, deliverCallback, consumerTag -> {});
@@ -235,7 +278,32 @@ public class MessageQueueImpl implements MessageQueue {
 
     // ==================== 通用命令发送 ====================
     @Override
-    public void sendCommand(String cmd, String dataJson) {
-        publish(MQKeys.CONTROLLER_CMD, buildMessage(cmd, dataJson));
+    public void sendCommand(String cmd, Map<String, Object> data) {
+        publish(MQKeys.CONTROLLER_CMD, buildMessage(cmd, data));
+    }
+
+    @Override
+    public void declareCarQueue(String carId) {
+        try {
+            channel.queueDeclare(MQKeys.carQueue(carId), true, false, false, null);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to declare queue for car: " + carId, e);
+        }
+    }
+    @Override
+    public void addCar(String carId, int x, int y) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("carId", carId);
+        data.put("x", x);
+        data.put("y", y);
+        sendCommand(MQKeys.CMD_ADD_CAR, data);
+    }
+    @Override
+    public void loadMapFile(int[][] mapData, int mapWidth, int mapHeight) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("mapData", mapData);
+        data.put("mapWidth", mapWidth);
+        data.put("mapHeight", mapHeight);
+        sendCommand(MQKeys.CMD_LOAD_MAP_FILE, data);
     }
 }

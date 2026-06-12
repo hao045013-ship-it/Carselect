@@ -9,7 +9,7 @@ import redis.clients.jedis.Transaction;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * 黑板实现类 —— 封装所有 Redis 操作
@@ -19,13 +19,25 @@ import java.util.UUID;
 public class BlackboardImpl implements Blackboard {
 
     private final JedisPool pool;
-    private final int mapWidth;
-    private final int mapHeight;
 
     public BlackboardImpl(String host, int port) {
         this.pool = new JedisPool(host, port);
-        this.mapWidth = RedisKeys.MAP_WIDTH;
-        this.mapHeight = RedisKeys.MAP_HEIGHT;
+    }
+
+    // ==================== 动态获取地图尺寸 ====================
+    private int getWidth(Jedis jedis) {
+        String val = jedis.hget(RedisKeys.TASK_CONFIG, "mapWidth");
+        return val == null ? RedisKeys.DEFAULT_MAP_WIDTH : Integer.parseInt(val);
+    }
+
+    private int getHeight(Jedis jedis) {
+        String val = jedis.hget(RedisKeys.TASK_CONFIG, "mapHeight");
+        return val == null ? RedisKeys.DEFAULT_MAP_HEIGHT : Integer.parseInt(val);
+    }
+
+    // 辅助方法：计算线性索引（带地图宽度）
+    private int index(int row, int col, int width) {
+        return row * width + col;
     }
 
     // ==================== 获取连接 ====================
@@ -33,70 +45,97 @@ public class BlackboardImpl implements Blackboard {
         return pool.getResource();
     }
 
+    // ==================== 地图尺寸接口（新增） ====================
+    @Override
+    public int getMapWidth() {
+        try (Jedis jedis = getJedis()) {
+            return getWidth(jedis);
+        }
+    }
+
+    @Override
+    public int getMapHeight() {
+        try (Jedis jedis = getJedis()) {
+            return getHeight(jedis);
+        }
+    }
+
     // ==================== 地图视野 ====================
     @Override
     public void exploreCell(int row, int col) {
         try (Jedis jedis = getJedis()) {
-            jedis.setbit(RedisKeys.MAP_VIEW, RedisKeys.index(row, col), true);
+            int width = getWidth(jedis);
+            jedis.setbit(RedisKeys.MAP_VIEW, index(row, col, width), true);
         }
     }
 
     @Override
     public boolean isExplored(int row, int col) {
         try (Jedis jedis = getJedis()) {
-            return jedis.getbit(RedisKeys.MAP_VIEW, RedisKeys.index(row, col));
+            int width = getWidth(jedis);
+            return jedis.getbit(RedisKeys.MAP_VIEW, index(row, col, width));
         }
     }
 
     @Override
     public boolean[] getFullMapView() {
         try (Jedis jedis = getJedis()) {
-            boolean[] result = new boolean[mapWidth * mapHeight];
-            for (int i = 0; i < result.length; i++) {
+            int width = getWidth(jedis);
+            int height = getHeight(jedis);
+            int total = width * height;
+            boolean[] result = new boolean[total];
+            for (int i = 0; i < total; i++) {
                 result[i] = jedis.getbit(RedisKeys.MAP_VIEW, i);
             }
             return result;
         }
     }
 
-    // ==================== 障碍物 ====================
+    // ==================== 静态障碍物（新增） ====================
     @Override
-    public void setObstacle(int row, int col, boolean value) {
+    public void setStaticBlock(int row, int col, boolean value) {
         try (Jedis jedis = getJedis()) {
-            jedis.setbit(RedisKeys.MAP_BLOCK, RedisKeys.index(row, col), value);
+            int width = getWidth(jedis);
+            jedis.setbit(RedisKeys.STATIC_BLOCK, index(row, col, width), value);
         }
     }
 
     @Override
-    public boolean hasObstacle(int row, int col) {
+    public boolean hasStaticBlock(int row, int col) {
         try (Jedis jedis = getJedis()) {
-            return jedis.getbit(RedisKeys.MAP_BLOCK, RedisKeys.index(row, col));
+            int width = getWidth(jedis);
+            return jedis.getbit(RedisKeys.STATIC_BLOCK, index(row, col, width));
         }
     }
 
     @Override
-    public boolean[] getFullMapBlock() {
+    public boolean[] getFullStaticBlock() {
         try (Jedis jedis = getJedis()) {
-            boolean[] result = new boolean[mapWidth * mapHeight];
-            for (int i = 0; i < result.length; i++) {
-                result[i] = jedis.getbit(RedisKeys.MAP_BLOCK, i);
+            int width = getWidth(jedis);
+            int height = getHeight(jedis);
+            int total = width * height;
+            boolean[] result = new boolean[total];
+            for (int i = 0; i < total; i++) {
+                result[i] = jedis.getbit(RedisKeys.STATIC_BLOCK, i);
             }
             return result;
         }
     }
 
     @Override
-    public void randomObstacles(double density) {
+    public void randomStaticBlocks(double density) {
         try (Jedis jedis = getJedis()) {
-            // 先清空
-            for (int i = 0; i < mapWidth * mapHeight; i++) {
-                jedis.setbit(RedisKeys.MAP_BLOCK, i, false);
+            int width = getWidth(jedis);
+            int height = getHeight(jedis);
+            // 清除所有静态障碍
+            for (int i = 0; i < width * height; i++) {
+                jedis.setbit(RedisKeys.STATIC_BLOCK, i, false);
             }
-            // 随机生成（避开边界，留给小车初始位置）
-            for (int r = 1; r < mapHeight - 1; r++) {
-                for (int c = 1; c < mapWidth - 1; c++) {
+            // 随机生成（避开边界）
+            for (int r = 1; r < height - 1; r++) {
+                for (int c = 1; c < width - 1; c++) {
                     if (Math.random() < density) {
-                        jedis.setbit(RedisKeys.MAP_BLOCK, RedisKeys.index(r, c), true);
+                        jedis.setbit(RedisKeys.STATIC_BLOCK, index(r, c, width), true);
                     }
                 }
             }
@@ -104,11 +143,129 @@ public class BlackboardImpl implements Blackboard {
     }
 
     @Override
-    public void clearAllObstacles() {
+    public void clearStaticBlocks() {
         try (Jedis jedis = getJedis()) {
-            for (int i = 0; i < mapWidth * mapHeight; i++) {
-                jedis.setbit(RedisKeys.MAP_BLOCK, i, false);
+            int width = getWidth(jedis);
+            int height = getHeight(jedis);
+            for (int i = 0; i < width * height; i++) {
+                jedis.setbit(RedisKeys.STATIC_BLOCK, i, false);
             }
+        }
+    }
+
+    // ==================== 动态障碍物（新增） ====================
+    @Override
+    public void setDynamicBlock(int row, int col, boolean value) {
+        try (Jedis jedis = getJedis()) {
+            int width = getWidth(jedis);
+            jedis.setbit(RedisKeys.DYNAMIC_BLOCK, index(row, col, width), value);
+        }
+    }
+
+    @Override
+    public boolean hasDynamicBlock(int row, int col) {
+        try (Jedis jedis = getJedis()) {
+            int width = getWidth(jedis);
+            return jedis.getbit(RedisKeys.DYNAMIC_BLOCK, index(row, col, width));
+        }
+    }
+
+    @Override
+    public boolean[] getFullDynamicBlock() {
+        try (Jedis jedis = getJedis()) {
+            int width = getWidth(jedis);
+            int height = getHeight(jedis);
+            int total = width * height;
+            boolean[] result = new boolean[total];
+            for (int i = 0; i < total; i++) {
+                result[i] = jedis.getbit(RedisKeys.DYNAMIC_BLOCK, i);
+            }
+            return result;
+        }
+    }
+
+    // ==================== 综合障碍判断（新增） ====================
+    @Override
+    public boolean hasBlock(int row, int col) {
+        return hasStaticBlock(row, col) || hasDynamicBlock(row, col);
+    }
+
+    // ==================== 原有障碍物接口（保留，内部操作 MAP_BLOCK） ====================
+    @Override
+    public void setObstacle(int row, int col, boolean value) {
+        setStaticBlock(row, col, value);
+
+    }
+
+    @Override
+    public boolean hasObstacle(int row, int col) {
+        return hasStaticBlock(row, col);
+    }
+
+    @Override
+    public boolean[] getFullMapBlock() {
+        return getFullStaticBlock();
+    }
+
+    @Override
+    public void randomObstacles(double density) {
+        randomStaticBlocks(density);
+    }
+
+    @Override
+    public void clearAllObstacles() {
+        clearStaticBlocks();
+    }
+
+    // ==================== 车辆管理（新增） ====================
+    @Override
+    public void addCar(String carId) {
+        try (Jedis jedis = getJedis()) {
+            jedis.sadd(RedisKeys.REGISTRY_CARS, carId);
+        }
+    }
+
+    @Override
+    public void removeCar(String carId) {
+        try (Jedis jedis = getJedis()) {
+            jedis.srem(RedisKeys.REGISTRY_CARS, carId);
+        }
+    }
+
+    @Override
+    public List<String> getCarList() {
+        try (Jedis jedis = getJedis()) {
+            return new ArrayList<>(jedis.smembers(RedisKeys.REGISTRY_CARS));
+        }
+    }
+
+    @Override
+    public boolean carExists(String carId) {
+        try (Jedis jedis = getJedis()) {
+            return jedis.sismember(RedisKeys.REGISTRY_CARS, carId);
+        }
+    }
+
+    // ==================== 原有车辆注册接口（保留） ====================
+    @Override
+    public void registerCar(String carId) {
+        addCar(carId);
+    }
+
+    @Override
+    public List<String> getOnlineCars() {
+        return getCarList();
+    }
+
+    @Override
+    public void unregisterCar(String carId) {
+        removeCar(carId);
+    }
+
+    @Override
+    public long getCarCount() {
+        try (Jedis jedis = getJedis()) {
+            return jedis.scard(RedisKeys.REGISTRY_CARS);
         }
     }
 
@@ -141,7 +298,6 @@ public class BlackboardImpl implements Blackboard {
         try (Jedis jedis = getJedis()) {
             String json = jedis.get(RedisKeys.targetKey(carId));
             if (json == null) return null;
-            // 简易解析
             json = json.replace("{", "").replace("}", "").replace("\"", "");
             String[] parts = json.split(",");
             String x = parts[0].split(":")[1];
@@ -194,6 +350,12 @@ public class BlackboardImpl implements Blackboard {
         }
     }
 
+    @Override
+    public List<String> getRouteList(String carId) {
+        try (Jedis jedis = getJedis()) {
+            return jedis.lrange(RedisKeys.routeListKey(carId), 0, -1);
+        }
+    }
     // ==================== 状态 ====================
     @Override
     public void setStatus(String carId, String status) {
@@ -241,6 +403,76 @@ public class BlackboardImpl implements Blackboard {
         }
     }
 
+    // ==================== 轨迹记录（新增） ====================
+    @Override
+    public void appendTrace(String carId, long tick, int x, int y) {
+        try (Jedis jedis = getJedis()) {
+            String trace = tick + "," + x + "," + y;
+            jedis.lpush(RedisKeys.traceKey(carId), trace);
+            // 可选：限制轨迹长度，例如保留最近 1000 条
+            jedis.ltrim(RedisKeys.traceKey(carId), 0, 999);
+        }
+    }
+
+    @Override
+    public List<String> getTrace(String carId) {
+        try (Jedis jedis = getJedis()) {
+            long len = jedis.llen(RedisKeys.traceKey(carId));
+            if (len == 0) return List.of();
+            return jedis.lrange(RedisKeys.traceKey(carId), 0, len - 1);
+        }
+    }
+
+    // ==================== 统计信息（新增） ====================
+    @Override
+    public void incrementBlockedCount(String carId) {
+        try (Jedis jedis = getJedis()) {
+            jedis.incr(RedisKeys.blockedCountKey(carId));
+        }
+    }
+
+    @Override
+    public int getBlockedCount(String carId) {
+        try (Jedis jedis = getJedis()) {
+            String val = jedis.get(RedisKeys.blockedCountKey(carId));
+            return val == null ? 0 : Integer.parseInt(val);
+        }
+    }
+
+    @Override
+    public void incrementRoutePlanCount(String carId) {
+        try (Jedis jedis = getJedis()) {
+            jedis.incr(RedisKeys.routePlanCountKey(carId));
+        }
+    }
+
+    @Override
+    public int getRoutePlanCount(String carId) {
+        try (Jedis jedis = getJedis()) {
+            String val = jedis.get(RedisKeys.routePlanCountKey(carId));
+            return val == null ? 0 : Integer.parseInt(val);
+        }
+    }
+
+    @Override
+    public void saveCoverageHistory(long tick, double coverage) {
+        try (Jedis jedis = getJedis()) {
+            String record = tick + "," + coverage;
+            jedis.lpush(RedisKeys.COVERAGE_HISTORY, record);
+            // 保留最近 1000 条记录
+            jedis.ltrim(RedisKeys.COVERAGE_HISTORY, 0, 999);
+        }
+    }
+
+    @Override
+    public List<String> getCoverageHistory() {
+        try (Jedis jedis = getJedis()) {
+            long len = jedis.llen(RedisKeys.COVERAGE_HISTORY);
+            if (len == 0) return List.of();
+            return jedis.lrange(RedisKeys.COVERAGE_HISTORY, 0, len - 1);
+        }
+    }
+
     // ==================== 配置 ====================
     @Override
     public void setTaskConfig(Map<String, String> config) {
@@ -256,7 +488,7 @@ public class BlackboardImpl implements Blackboard {
         }
     }
 
-    // ==================== 快照与统计 ====================
+    // ==================== 快照与统计（保留旧接口） ====================
     @Override
     public void saveSnapshot(String json) {
         try (Jedis jedis = getJedis()) {
@@ -294,41 +526,11 @@ public class BlackboardImpl implements Blackboard {
         }
     }
 
-    // ==================== 注册 ====================
-    @Override
-    public void registerCar(String carId) {
-        try (Jedis jedis = getJedis()) {
-            jedis.sadd(RedisKeys.REGISTRY_CARS, carId);
-        }
-    }
-
-    @Override
-    public List<String> getOnlineCars() {
-        try (Jedis jedis = getJedis()) {
-            return new ArrayList<>(jedis.smembers(RedisKeys.REGISTRY_CARS));
-        }
-    }
-
-    @Override
-    public void unregisterCar(String carId) {
-        try (Jedis jedis = getJedis()) {
-            jedis.srem(RedisKeys.REGISTRY_CARS, carId);
-        }
-    }
-
-    @Override
-    public long getCarCount() {
-        try (Jedis jedis = getJedis()) {
-            return jedis.scard(RedisKeys.REGISTRY_CARS);
-        }
-    }
-
     // ==================== 日志 ====================
     @Override
     public void addLogEntry(String entry) {
         try (Jedis jedis = getJedis()) {
             jedis.lpush(RedisKeys.EXPLORATION_LOG, entry);
-            // 只保留最近 1000 条
             jedis.ltrim(RedisKeys.EXPLORATION_LOG, 0, 999);
         }
     }
@@ -393,7 +595,7 @@ public class BlackboardImpl implements Blackboard {
     public void addUserHistory(String userId, String record) {
         try (Jedis jedis = getJedis()) {
             jedis.lpush(RedisKeys.userHistoryKey(userId), record);
-            jedis.ltrim(RedisKeys.userHistoryKey(userId), 0, 49); // 保留50条
+            jedis.ltrim(RedisKeys.userHistoryKey(userId), 0, 49);
         }
     }
 
@@ -406,33 +608,34 @@ public class BlackboardImpl implements Blackboard {
         }
     }
 
-    // ==================== 原子移动 ====================
+    // ==================== 原子移动（重要修改） ====================
     @Override
     public void atomicMove(String carId, int oldX, int oldY, int newX, int newY, int visionRadius) {
         try (Jedis jedis = getJedis()) {
+            int width = getWidth(jedis);
+            int height = getHeight(jedis);
             Transaction t = jedis.multi();
 
             // 更新位置
             t.hset(RedisKeys.positionKey(carId), "x", String.valueOf(newX));
             t.hset(RedisKeys.positionKey(carId), "y", String.valueOf(newY));
 
-            // 旧位置清除障碍
-            t.setbit(RedisKeys.MAP_BLOCK, RedisKeys.index(oldY, oldX), false);
+            // 旧位置清除动态障碍（车辆占位）
+            t.setbit(RedisKeys.DYNAMIC_BLOCK, index(oldY, oldX, width), false);
+            // 新位置设置动态障碍
+            t.setbit(RedisKeys.DYNAMIC_BLOCK, index(newY, newX, width), true);
 
-            // 新位置设置障碍
-            t.setbit(RedisKeys.MAP_BLOCK, RedisKeys.index(newY, newX), true);
-
-            // 点亮视野范围
+            // 点亮视野范围（使用 MAP_VIEW）
             for (int dr = -visionRadius; dr <= visionRadius; dr++) {
                 for (int dc = -visionRadius; dc <= visionRadius; dc++) {
                     int vr = newY + dr;
                     int vc = newX + dc;
-                    if (vr >= 0 && vr < mapHeight && vc >= 0 && vc < mapWidth) {
-                        t.setbit(RedisKeys.MAP_VIEW, RedisKeys.index(vr, vc), true);
+                    if (vr >= 0 && vr < height && vc >= 0 && vc < width) {
+                        t.setbit(RedisKeys.MAP_VIEW, index(vr, vc, width), true);
                     }
                 }
             }
-
+            t.incr(RedisKeys.stepsKey(carId));
             t.exec();
         }
     }
@@ -441,8 +644,25 @@ public class BlackboardImpl implements Blackboard {
     @Override
     public double getExploredPercent() {
         try (Jedis jedis = getJedis()) {
+            int width = getWidth(jedis);
+            int height = getHeight(jedis);
             long explored = jedis.bitcount(RedisKeys.MAP_VIEW);
-            return (double) explored / (mapWidth * mapHeight) * 100.0;
+            return (double) explored / (width * height) * 100.0;
+        }
+    }
+   //节拍
+   @Override
+   public long getCurrentTick() {
+       try (Jedis jedis = getJedis()) {
+           String val = jedis.get(RedisKeys.CURRENT_TICK);
+           return val == null ? 0L : Long.parseLong(val);
+       }
+   }
+
+    @Override
+    public void setCurrentTick(long tick) {
+        try (Jedis jedis = getJedis()) {
+            jedis.set(RedisKeys.CURRENT_TICK, String.valueOf(tick));
         }
     }
 
