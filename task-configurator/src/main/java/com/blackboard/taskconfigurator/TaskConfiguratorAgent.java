@@ -198,6 +198,6 @@ public class TaskConfiguratorAgent {
             }
         }
 
-        mq.broadcastRefreshAll(0L);
+        mq.broadcastRefreshAll(0L);//
     }
 }

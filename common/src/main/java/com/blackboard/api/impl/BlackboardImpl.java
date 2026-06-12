@@ -479,7 +479,7 @@ public class BlackboardImpl implements Blackboard {
         try (Jedis jedis = getJedis()) {
             for (Map.Entry<String, String> entry : config.entrySet()) {
                 jedis.hset(RedisKeys.TASK_CONFIG, entry.getKey(), entry.getValue());
-            }
+            }//
         }
     }
 

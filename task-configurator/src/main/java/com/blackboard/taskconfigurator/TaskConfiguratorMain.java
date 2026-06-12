@@ -16,6 +16,6 @@ public class TaskConfiguratorMain {
         TaskConfiguratorAgent agent = new TaskConfiguratorAgent(board, mq);
         agent.start();
 
-        System.out.println("TaskConfigurator started.");
+        System.out.println("TaskConfigurator started.");//
     }
 }

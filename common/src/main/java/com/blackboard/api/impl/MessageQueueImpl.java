@@ -305,5 +305,6 @@ public class MessageQueueImpl implements MessageQueue {
         data.put("mapWidth", mapWidth);
         data.put("mapHeight", mapHeight);
         sendCommand(MQKeys.CMD_LOAD_MAP_FILE, data);
+        //
     }
 }
