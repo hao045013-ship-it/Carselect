@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>多机器人协作巡检仿真系统</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ==================== 顶部标题栏 ==================== -->
+<header id="mainHeader">
+    <div class="header-left">
+        <span class="header-icon">◈</span>
+        <span class="header-title">多机器人协作巡检仿真系统</span>
+    </div>
+    <div class="header-center">
+        <nav class="nav-tabs" id="navTabs">
+            <button class="nav-tab active" data-tab="realtime">实时系统</button>
+            <button class="nav-tab" data-tab="replay">回放分析</button>
+            <button class="nav-tab" data-tab="settings">系统设置</button>
+            <button class="nav-tab" data-tab="user">用户中心</button>
+        </nav>
+    </div>
+    <div class="header-right">
+        <span id="userAvatar" class="header-avatar" title="点击登录 / 用户中心">
+            <span class="avatar-circle">👤</span>
+            <span class="avatar-name" id="headerUserName">未登录</span>
+        </span>
+        <span class="header-divider">|</span>
+        <span id="connectionStatus" class="connection-status disconnected" title="WebSocket 连接状态">
+            <span class="status-dot"></span>
+            <span class="status-text">未连接</span>
+        </span>
+        <span class="header-divider">|</span>
+        <span id="systemTime" class="system-time">--:--:--</span>
+    </div>
+</header>
+
+<!-- ==================== 主体容器 ==================== -->
+<div id="appContainer">
+
+    <!-- ========== 左侧面板 ========== -->
+    <aside class="left-panel" id="leftPanel">
+
+        <!-- 仿真控制 -->
+        <section class="panel-card">
+            <h3 class="card-title">
+                <span class="card-icon">▶</span> 仿真控制
+            </h3>
+            <div class="card-body">
+                <div class="btn-group">
+                    <button class="btn-sim btn-start" data-action="start" id="btnStart">
+                        <span class="btn-icon">▶</span>
+                        <span class="btn-label">开始仿真</span>
+                    </button>
+                    <button class="btn-sim btn-pause" data-action="pause" id="btnPause" disabled>
+                        <span class="btn-icon">⏸</span>
+                        <span class="btn-label">暂停仿真</span>
+                    </button>
+                    <button class="btn-sim btn-reset" data-action="reset" id="btnReset">
+                        <span class="btn-icon">↻</span>
+                        <span class="btn-label">重置仿真</span>
+                    </button>
+                </div>
+                <div class="param-row">
+                    <label>仿真速度</label>
+                    <div class="range-with-value">
+                        <input type="range" id="speedSlider" min="1" max="10" value="5" step="1">
+                        <span class="range-value" id="speedValue">5x</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 参数设置 -->
+        <section class="panel-card">
+            <h3 class="card-title">
+                <span class="card-icon">⚙</span> 参数设置
+            </h3>
+            <div class="card-body">
+                <div class="param-row">
+                    <label for="robotCount">机器人数量</label>
+                    <select id="robotCount" class="sim-select">
+                        <option value="3">3 辆</option>
+                        <option value="5" selected>5 辆</option>
+                        <option value="8">8 辆</option>
+                        <option value="10">10 辆</option>
+                    </select>
+                </div>
+                <div class="param-row">
+                    <label>障碍物密度</label>
+                    <div class="range-with-value">
+                        <input type="range" id="obstacleDensity" min="0" max="60" value="25" step="1">
+                        <span class="range-value" id="densityValue">25%</span>
+                    </div>
+                </div>
+                <div class="param-row">
+                    <label for="mapWidth">地图宽度</label>
+                    <input type="number" id="mapWidth" class="sim-input" value="26" min="15" max="40">
+                </div>
+                <div class="param-row">
+                    <label for="mapHeight">地图高度</label>
+                    <input type="number" id="mapHeight" class="sim-input" value="16" min="10" max="30">
+                </div>
+            </div>
+        </section>
+
+        <!-- 障碍物管理 -->
+        <section class="panel-card">
+            <h3 class="card-title">
+                <span class="card-icon">■</span> 障碍物管理
+            </h3>
+            <div class="card-body">
+                <button class="btn-secondary" data-action="randomObstacle" id="btnRandomObs">
+                    <span class="btn-icon">🎲</span> 随机生成障碍物
+                </button>
+                <button class="btn-secondary" data-action="clearObstacle" id="btnClearObs">
+                    <span class="btn-icon">✕</span> 清除全部障碍物
+                </button>
+                <div class="param-row toggle-row">
+                    <label for="manualToggle">手动编辑模式</label>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="manualToggle">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <p class="hint-text" id="manualHint">开启后可点击地图格子添加/移除障碍物</p>
+            </div>
+        </section>
+
+        <!-- 地图背景 -->
+        <section class="panel-card">
+            <h3 class="card-title">
+                <span class="card-icon">🖼</span> 地图背景
+            </h3>
+            <div class="card-body">
+                <input type="file" id="mapImageInput" accept="image/*" style="display:none;">
+                <button class="btn-secondary" id="btnUploadMap">
+                    <span class="btn-icon">📁</span> 导入图片地图
+                </button>
+                <div id="mapImageInfo" class="map-image-info" style="display:none;">
+                    <span class="image-file-name" id="imageFileName"></span>
+                    <button class="btn-remove-img" id="btnRemoveMap" title="移除背景图">✕</button>
+                </div>
+                <p class="hint-text">支持 JPG/PNG 图片作为地图背景</p>
+            </div>
+        </section>
+
+    </aside>
+
+    <!-- ========== 中间面板 ========== -->
+    <main class="center-panel" id="centerPanel">
+
+        <!-- 地图区域 -->
+        <div class="map-area" id="mapArea">
+            <div id="canvasWrapper" class="canvas-wrapper">
+                <canvas id="mapCanvas"></canvas>
+            </div>
+            <!-- 图例 -->
+            <div id="mapLegend" class="map-legend">
+                <div class="legend-title">图例</div>
+                <div class="legend-item"><span class="legend-swatch unexplored"></span><span>未探索</span></div>
+                <div class="legend-item"><span class="legend-swatch explored"></span><span>已探索</span></div>
+                <div class="legend-item"><span class="legend-swatch obstacle"></span><span>静态障碍</span></div>
+                <div class="legend-item"><span class="legend-swatch dynamic"></span><span>动态障碍</span></div>
+                <div class="legend-item"><span class="legend-swatch robot-dot"></span><span>机器人</span></div>
+            </div>
+            <!-- 悬停提示 -->
+            <div id="cellTooltip" class="cell-tooltip"></div>
+        </div>
+
+        <!-- 底部三列面板 -->
+        <div class="bottom-panels" id="bottomPanels">
+
+            <!-- 探索覆盖率趋势 -->
+            <section class="bottom-card" id="trendPanel">
+                <div class="bottom-card-header">
+                    <span class="bottom-card-icon">📈</span>
+                    <span>探索覆盖率趋势</span>
+                    <span class="bottom-card-value mono" id="chartCoverageValue">0%</span>
+                </div>
+                <div class="bottom-card-body chart-body">
+                    <canvas id="trendCanvas"></canvas>
+                </div>
+            </section>
+
+            <!-- 机器人步数统计 -->
+            <section class="bottom-card" id="stepsPanel">
+                <div class="bottom-card-header">
+                    <span class="bottom-card-icon">👣</span>
+                    <span>机器人步数统计</span>
+                    <span class="bottom-card-value mono" id="stepsTotalValue">0</span>
+                </div>
+                <div class="bottom-card-body steps-body" id="stepsStatsContainer">
+                    <div class="empty-hint">等待仿真数据...</div>
+                </div>
+            </section>
+
+            <!-- 系统信息 -->
+            <section class="bottom-card" id="sysInfoPanel">
+                <div class="bottom-card-header">
+                    <span class="bottom-card-icon">ℹ</span>
+                    <span>系统信息</span>
+                </div>
+                <div class="bottom-card-body sysinfo-body">
+                    <div class="sys-info-row">
+                        <span class="sys-info-label">系统状态</span>
+                        <span class="sys-info-value" id="sysInfoStatus"><span class="inline-dot idle"></span> 待命</span>
+                    </div>
+                    <div class="sys-info-row">
+                        <span class="sys-info-label">当前 Tick</span>
+                        <span class="sys-info-value mono" id="sysInfoTick">0</span>
+                    </div>
+                    <div class="sys-info-row">
+                        <span class="sys-info-label">运行时间</span>
+                        <span class="sys-info-value mono" id="sysInfoElapsed">00:00:00</span>
+                    </div>
+                    <div class="sys-info-row">
+                        <span class="sys-info-label">在线机器人</span>
+                        <span class="sys-info-value mono" id="sysInfoOnlineRobots">0</span>
+                    </div>
+                    <div class="sys-info-row">
+                        <span class="sys-info-label">地图尺寸</span>
+                        <span class="sys-info-value mono" id="sysInfoMapSize">26 × 16</span>
+                    </div>
+                    <div class="sys-info-row">
+                        <span class="sys-info-label">障碍物数量</span>
+                        <span class="sys-info-value mono" id="sysInfoObstacles">0</span>
+                    </div>
+                    <div class="sys-info-row">
+                        <span class="sys-info-label">探索覆盖率</span>
+                        <span class="sys-info-value mono" id="sysInfoCoverage">0%</span>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- ========== 右侧面板 ========== -->
+    <aside class="right-panel" id="rightPanel">
+
+        <!-- 机器人状态 -->
+        <section class="panel-card">
+            <h3 class="card-title">
+                <span class="card-icon">🤖</span> 机器人状态
+                <span class="card-badge" id="robotCountBadge">0</span>
+            </h3>
+            <div class="card-body robot-cards-body" id="robotCardsContainer">
+                <div class="empty-hint">等待仿真数据...</div>
+            </div>
+        </section>
+
+        <!-- 统计概览（紧凑） -->
+        <section class="panel-card">
+            <h3 class="card-title">
+                <span class="card-icon">📊</span> 统计概览
+            </h3>
+            <div class="card-body">
+                <div class="stat-row">
+                    <span class="stat-label">探索覆盖率</span>
+                    <span class="stat-value" id="coveragePercent">0%</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="coverageBar" style="width: 0%;"></div>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">机器人总步数</span>
+                    <span class="stat-value mono" id="totalSteps">0</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">障碍物数量</span>
+                    <span class="stat-value mono" id="obstacleCount">0</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">已用时间</span>
+                    <span class="stat-value mono" id="elapsedTime">00:00:00</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">在线机器人数</span>
+                    <span class="stat-value mono" id="onlineRobotCount">0</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- 操作日志 -->
+        <section class="panel-card">
+            <h3 class="card-title">
+                <span class="card-icon">📋</span> 操作日志
+            </h3>
+            <div class="card-body">
+                <div id="logContainer" class="log-container">
+                    <div class="log-entry log-info">
+                        <span class="log-time">--:--:--</span>
+                        <span class="log-msg">系统就绪，等待仿真启动...</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </aside>
+</div>
+
+<!-- ==================== 底部状态栏 ==================== -->
+<footer id="statusBar">
+    <div class="stat-box" id="statCoverage">
+        <span class="stat-box-label">探索覆盖率</span>
+        <span class="stat-box-value">0%</span>
+    </div>
+    <div class="stat-box" id="statSteps">
+        <span class="stat-box-label">总步数</span>
+        <span class="stat-box-value">0</span>
+    </div>
+    <div class="stat-box" id="statTick">
+        <span class="stat-box-label">当前 Tick</span>
+        <span class="stat-box-value">0</span>
+    </div>
+    <div class="stat-box" id="statTime">
+        <span class="stat-box-label">运行时间</span>
+        <span class="stat-box-value">00:00:00</span>
+    </div>
+    <div class="stat-box" id="statSystem">
+        <span class="stat-box-label">系统状态</span>
+        <span class="stat-box-value">
+            <span class="sys-status-dot idle"></span>
+            <span id="sysStatusText">待命</span>
+        </span>
+    </div>
+</footer>
+
+<!-- ==================== 脚本 ==================== -->
+<script src="canvas.js"></script>
+<script src="app.js"></script>
+
+</body>
+</html>
