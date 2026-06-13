@@ -24,6 +24,7 @@
         <module>replay-logger</module>
         <module>display</module>
         <module>launcher</module>
+        <module>obstacle-manager</module>
     </modules>
 
     <properties>
