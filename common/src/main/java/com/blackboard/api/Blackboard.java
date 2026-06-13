@@ -62,7 +62,7 @@ public interface Blackboard {
     void clearAllObstacles();
 
     // ==================== 汽车位置 ====================
-    void setPosition(String carId, int x, int y);
+    void setPosition(String carId, int row, int col);
     Map<String, String> getPosition(String carId);
 
     // ==================== 目标 ====================
