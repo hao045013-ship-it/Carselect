@@ -1,0 +1,15 @@
+redis:
+  host: localhost
+  port: 6379
+
+rabbitmq:
+  host: localhost
+  port: 5672
+
+server:
+  port: 8083
+
+sqlserver:
+  url: jdbc:sqlserver://127.0.0.1:1433;databaseName=ExplorationDB;encrypt=false;trustServerCertificate=true
+  username: sa
+  password: yxy450716
