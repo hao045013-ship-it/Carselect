@@ -8,18 +8,22 @@
         <outputRelativeToContentRoot value="true" />
         <module name="registry" />
         <module name="controller" />
+        <module name="display" />
+        <module name="navigator" />
+        <module name="task-configurator" />
+        <module name="stats-reporter" />
         <module name="replay-logger" />
         <module name="target-planner" />
         <module name="common" />
         <module name="car" />
-        <module name="display" />
-        <module name="navigator" />
+        <module name="obstacle-manager" />
         <module name="exploration-logger" />
-        <module name="task-configurator" />
-        <module name="stats-reporter" />
         <module name="launcher" />
       </profile>
     </annotationProcessing>
+    <bytecodeTargetLevel>
+      <module name="obatacle-manager" target="17" />
+    </bytecodeTargetLevel>
   </component>
   <component name="JavacSettings">
     <option name="ADDITIONAL_OPTIONS_STRING" value="-parameters" />

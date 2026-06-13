@@ -99,7 +99,7 @@ public class TaskConfigurator {
             int[] row = mapData[r];
             for (int c = 0; c < row.length && c < mapWidth; c++) {
                 if (row[c] == 1) {
-                    board.setStaticBlock(r, c, true);
+                    board.setStaticBlock(r, c, true);//
                 }
             }
         }

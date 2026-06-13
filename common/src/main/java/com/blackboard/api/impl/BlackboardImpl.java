@@ -271,10 +271,10 @@ public class BlackboardImpl implements Blackboard {
 
     // ==================== 汽车位置 ====================
     @Override
-    public void setPosition(String carId, int x, int y) {
+    public void setPosition(String carId, int row, int col) {
         try (Jedis jedis = getJedis()) {
-            jedis.hset(RedisKeys.positionKey(carId), "x", String.valueOf(x));
-            jedis.hset(RedisKeys.positionKey(carId), "y", String.valueOf(y));
+            jedis.hset(RedisKeys.positionKey(carId), "x", String.valueOf(col));
+            jedis.hset(RedisKeys.positionKey(carId), "y", String.valueOf(row));
         }
     }
 

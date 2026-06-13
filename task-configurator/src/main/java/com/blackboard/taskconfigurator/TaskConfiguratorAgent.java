@@ -135,7 +135,7 @@ public class TaskConfiguratorAgent {
         }
 
         board.addCar(carId);
-        board.setPosition(carId, x, y);
+        board.setPosition(carId, y, x);
         board.setStatus(carId, CarStatus.IDLE.name());
         board.setDynamicBlock(y, x, true);
         board.appendTrace(carId, 0L, x, y);
