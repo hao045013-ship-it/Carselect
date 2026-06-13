@@ -1,0 +1,5 @@
+com\blackboard\exploration\LogQueryServer.class
+com\blackboard\exploration\ExplorationLoggerApp$LoggerConfig.class
+com\blackboard\exploration\EventLogWriter.class
+com\blackboard\exploration\SqlPersistence.class
+com\blackboard\exploration\ExplorationLoggerApp.class
