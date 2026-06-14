@@ -307,4 +307,21 @@ public class MessageQueueImpl implements MessageQueue {
         sendCommand(MQKeys.CMD_LOAD_MAP_FILE, data);
         //
     }
+    // ==================== 通用队列转发 ====================
+    @Override
+    public void sendToQueue(String queueName, String cmd, Map<String, Object> data) {
+        if (queueName == null || queueName.isBlank()) {
+            throw new IllegalArgumentException("queueName cannot be null or blank");
+        }
+
+        if (cmd == null || cmd.isBlank()) {
+            throw new IllegalArgumentException("cmd cannot be null or blank");
+        }
+
+        if (data == null) {
+            data = Collections.emptyMap();
+        }
+
+        publish(queueName, buildMessage(cmd, data));
+    }
 }
