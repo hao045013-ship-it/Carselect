@@ -239,11 +239,13 @@ public class MessageQueueImpl implements MessageQueue {
         subscribe(MQKeys.TASK_CONFIG_CMD, listener);
     }
 
+    //有改动
     @Override
     public void subscribeUpdateView(MessageListener listener) {
         try {
-            // 每个订阅者声明自己的匿名队列，绑定到 Fanout 交换机
-            String queueName = channel.queueDeclare().getQueue();
+            //String queueName = channel.queueDeclare().getQueue();
+            // 改动说明：传空字符串让 RabbitMQ 生成合法队列名（不带 amq. 前缀）
+            String queueName = channel.queueDeclare("", false, true, true, null).getQueue();
             channel.queueBind(queueName, MQKeys.EXCHANGE_UPDATE_VIEW, "");
             subscribe(queueName, listener);
         } catch (Exception e) {
@@ -261,11 +263,11 @@ public class MessageQueueImpl implements MessageQueue {
         subscribe(MQKeys.REGISTRY_CMD, listener);
     }
 
-    // ==================== 通用订阅 ====================
+    // 有改动==================== 通用订阅 ====================
     private void subscribe(String queueName, MessageListener listener) {
         try {
             // 确保队列存在（如果不存在则创建）
-            channel.queueDeclare(queueName, true, false, false, null);
+            //channel.queueDeclare(queueName, true, false, false, null);
             DeliverCallback deliverCallback = (consumerTag, delivery) -> {
                 String message = new String(delivery.getBody(), "UTF-8");
                 listener.onMessage(message);
