@@ -46,4 +46,5 @@ public interface MessageQueue {
     void declareCarQueue(String carId);
     void addCar(String carId, int x, int y);
     void loadMapFile(int[][] mapData, int mapWidth, int mapHeight);
+    void sendToQueue(String queueName, String cmd, Map<String, Object> data);
 }
