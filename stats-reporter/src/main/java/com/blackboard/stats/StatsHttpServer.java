@@ -2,11 +2,7 @@ package com.blackboard.stats;
 
 import com.alibaba.fastjson2.JSONObject;
 import com.blackboard.api.Blackboard;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -15,6 +11,7 @@ import java.util.Map;
 /**
  * 统计分析 HTTP 查询接口（端口 8085）
  */
+@CrossOrigin(origins = "*")
 @RestController
 @RequestMapping("/api/stats")
 public class StatsHttpServer {

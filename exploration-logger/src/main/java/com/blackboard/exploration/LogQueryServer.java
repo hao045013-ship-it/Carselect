@@ -2,11 +2,7 @@ package com.blackboard.exploration;
 
 import com.alibaba.fastjson2.JSONObject;
 import com.blackboard.api.Blackboard;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -17,6 +13,7 @@ import java.util.function.Predicate;
 /**
  * 探索日志 HTTP 查询接口（端口 8083）
  */
+@CrossOrigin(origins = "*")
 @RestController
 @RequestMapping("/api/logs")
 public class LogQueryServer {
