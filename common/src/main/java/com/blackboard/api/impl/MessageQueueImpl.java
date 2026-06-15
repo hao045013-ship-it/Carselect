@@ -293,11 +293,11 @@ public class MessageQueueImpl implements MessageQueue {
         }
     }
     @Override
-    public void addCar(String carId, int x, int y) {
+    public void addCar(String carId, int row, int col) {
         Map<String, Object> data = new HashMap<>();
         data.put("carId", carId);
-        data.put("x", x);
-        data.put("y", y);
+        data.put("row", row);
+        data.put("col", col);
         sendCommand(MQKeys.CMD_ADD_CAR, data);
     }
     @Override

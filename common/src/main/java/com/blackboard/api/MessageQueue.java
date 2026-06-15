@@ -44,7 +44,7 @@ public interface MessageQueue {
     // ==================== 工具方法 ====================
     void sendCommand(String cmd, Map<String, Object> data);
     void declareCarQueue(String carId);
-    void addCar(String carId, int x, int y);
+    void addCar(String carId, int row, int col);
     void loadMapFile(int[][] mapData, int mapWidth, int mapHeight);
     void sendToQueue(String queueName, String cmd, Map<String, Object> data);
 }

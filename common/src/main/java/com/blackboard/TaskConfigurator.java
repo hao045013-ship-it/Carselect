@@ -46,8 +46,10 @@ public class TaskConfigurator {
             for (int i = 0; i < cars.size(); i++) {
                 JSONObject car = cars.getJSONObject(i);
                 String carId = car.getString("carId");
-                int x = car.getIntValue("x");
-                int y = car.getIntValue("y");
+                int row = car.containsKey("row") ? car.getIntValue("row") : car.getIntValue("y");
+                int col = car.containsKey("col") ? car.getIntValue("col") : car.getIntValue("x");
+                int x = col;
+                int y = row;
                 initializeCar(carId, x, y);
             }
         }
@@ -79,7 +81,7 @@ public class TaskConfigurator {
         board.addCar(carId);
 
         // 3. 设置初始状态和位置
-        board.setPosition(carId, x, y);
+        board.setPosition(carId, y, x);
         board.setStatus(carId, CarStatus.IDLE.name());
         board.setDynamicBlock(y, x, true);
 
