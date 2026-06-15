@@ -68,11 +68,12 @@ public class GreedyTargetSelector implements TargetSelector {
         List<Position> filtered = candidates.stream()
                 .filter(p -> !context.getReservedTargets().contains(p))
                 .filter(p -> !context.getOccupiedByCars().contains(p))
+                .filter(p -> !context.getKnownObstacles().contains(p))
                 .toList();
 
         if (filtered.isEmpty()) {
             TargetSelectionMetrics metrics = metrics(frontier.size(), candidateCount, 0, context, Double.NaN, 0, begin);
-            return TargetSelectionDecision.notAssigned("all_candidates_reserved_or_occupied", metrics);
+            return TargetSelectionDecision.notAssigned("all_candidates_reserved_occupied_or_known_obstacle", metrics);
         }
 
         Position selected = filtered.stream()
@@ -186,6 +187,7 @@ public class GreedyTargetSelector implements TargetSelector {
                 filteredCandidateCount,
                 context.getOccupiedByCars() == null ? 0 : context.getOccupiedByCars().size(),
                 context.getReservedTargets() == null ? 0 : context.getReservedTargets().size(),
+                context.getKnownObstacles() == null ? 0 : context.getKnownObstacles().size(),
                 selectedScore,
                 selectedInformationGain,
                 (System.nanoTime() - beginNano) / 1_000_000

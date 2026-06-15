@@ -15,6 +15,7 @@ public class TargetSelectionMetrics {
     private final int filteredCandidateCount;
     private final int occupiedCarCount;
     private final int reservedTargetCount;
+    private final int knownObstacleCount;
     private final double selectedScore;
     private final int selectedInformationGain;
     private final long elapsedMillis;
@@ -25,6 +26,7 @@ public class TargetSelectionMetrics {
                                   int filteredCandidateCount,
                                   int occupiedCarCount,
                                   int reservedTargetCount,
+                                  int knownObstacleCount,
                                   double selectedScore,
                                   int selectedInformationGain,
                                   long elapsedMillis) {
@@ -34,6 +36,7 @@ public class TargetSelectionMetrics {
         this.filteredCandidateCount = filteredCandidateCount;
         this.occupiedCarCount = occupiedCarCount;
         this.reservedTargetCount = reservedTargetCount;
+        this.knownObstacleCount = knownObstacleCount;
         this.selectedScore = selectedScore;
         this.selectedInformationGain = selectedInformationGain;
         this.elapsedMillis = elapsedMillis;
@@ -63,6 +66,10 @@ public class TargetSelectionMetrics {
         return reservedTargetCount;
     }
 
+    public int getKnownObstacleCount() {
+        return knownObstacleCount;
+    }
+
     public double getSelectedScore() {
         return selectedScore;
     }
@@ -83,6 +90,7 @@ public class TargetSelectionMetrics {
         map.put("filteredCandidateCount", filteredCandidateCount);
         map.put("occupiedCarCount", occupiedCarCount);
         map.put("reservedTargetCount", reservedTargetCount);
+        map.put("knownObstacleCount", knownObstacleCount);
         map.put("selectedScore", selectedScore);
         map.put("selectedInformationGain", selectedInformationGain);
         map.put("elapsedMs", elapsedMillis);

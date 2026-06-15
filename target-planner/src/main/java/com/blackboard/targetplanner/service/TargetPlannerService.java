@@ -28,8 +28,10 @@ public class TargetPlannerService {
         boolean[] explored = board.getFullMapView();
         Set<Position> occupied = reader.readAllCarPositions();
         Set<Position> reservedTargets = reader.readReservedTargets(carId);
+        Set<Position> knownObstacles = reader.readKnownStaticObstacles(width, height);
 
-        TargetSelectionContext context = new TargetSelectionContext(carId, carPosition, explored, width, height, occupied, reservedTargets);
+        TargetSelectionContext context = new TargetSelectionContext(
+                carId, carPosition, explored, width, height, occupied, reservedTargets, knownObstacles);
         TargetSelectionDecision decision = selector.select(context);
         if (!decision.isAssigned()) {
             board.clearTarget(carId);

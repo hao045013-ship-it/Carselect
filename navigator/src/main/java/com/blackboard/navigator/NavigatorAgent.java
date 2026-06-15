@@ -16,6 +16,7 @@ import com.blackboard.navigator.util.NavigatorDataReader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -26,11 +27,11 @@ import java.util.concurrent.CountDownLatch;
 /**
  * Navigator 知识源。
  *
- * <p>职责：监听 PLAN_ROUTE，读取当前位置/目标/其他小车当前位置，调用 BFS、A* 或 Weighted A*，
+ * <p>职责：监听 PLAN_ROUTE，读取当前位置/目标/其他小车当前位置/已探索障碍物，调用 BFS、A* 或 Weighted A*，
  * 将路径写入 CarID:RouteList，并向 Controller 回复 ROUTE_PLANNED。</p>
  *
- * <p>重要约束：本组件不读取 staticBlock/mapBlock，不记录未知障碍物，只把其他小车当前位置
- * 作为规划时刻的动态障碍物。</p>
+ * <p>重要约束：本组件只读取已经被 mapView 标记为探索过的静态障碍物。未探索区域中的障碍物
+ * 仍然保持未知，不会被路径规划提前使用。</p>
  */
 public class NavigatorAgent {
     private static final Logger log = LoggerFactory.getLogger(NavigatorAgent.class);
@@ -92,19 +93,32 @@ public class NavigatorAgent {
         if (targetOutOfBounds) {
             board.clearRoute(carId);
             mq.replyRoutePlanned(carId, false, 0);
-            logPlanningMetrics(carId, algorithm, false, 0, 0, 0, 0, "target_out_of_bounds");
+            logPlanningMetrics(carId, algorithm, false, 0, 0, 0, 0, 0, 0, "target_out_of_bounds");
             return List.of();
         }
 
-        Set<Position> dynamicBlocks = reader.readOtherCarPositions(carId);
-        if (dynamicBlocks.contains(target)) {
+        Set<Position> otherCarPositions = reader.readOtherCarPositions(carId);
+        Set<Position> knownStaticObstacles = reader.readKnownStaticObstacles(width, height);
+        Set<Position> knownBlockedCells = new HashSet<>(knownStaticObstacles);
+        knownBlockedCells.addAll(otherCarPositions);
+        if (knownStaticObstacles.contains(target)) {
             board.clearRoute(carId);
             mq.replyRoutePlanned(carId, false, 0);
-            logPlanningMetrics(carId, algorithm, false, 0, 0, 0, dynamicBlocks.size(), "target_occupied_by_other_car");
+            logPlanningMetrics(carId, algorithm, false, 0, 0, 0,
+                    otherCarPositions.size(), knownStaticObstacles.size(), knownBlockedCells.size(),
+                    "target_known_static_obstacle");
+            return List.of();
+        }
+        if (otherCarPositions.contains(target)) {
+            board.clearRoute(carId);
+            mq.replyRoutePlanned(carId, false, 0);
+            logPlanningMetrics(carId, algorithm, false, 0, 0, 0,
+                    otherCarPositions.size(), knownStaticObstacles.size(), knownBlockedCells.size(),
+                    "target_occupied_by_other_car");
             return List.of();
         }
 
-        RoutePlanningResult result = plannerService.planWithMetrics(algorithm, start, target, width, height, dynamicBlocks);
+        RoutePlanningResult result = plannerService.planWithMetrics(algorithm, start, target, width, height, knownBlockedCells);
         List<Position> route = result.getRoute();
 
         replaceRoute(carId, route);
@@ -116,10 +130,13 @@ public class NavigatorAgent {
                 route.size(),
                 result.getVisitedNodes(),
                 result.getElapsedMillis(),
-                result.getDynamicObstacleCount(),
+                otherCarPositions.size(),
+                knownStaticObstacles.size(),
+                knownBlockedCells.size(),
                 "ok");
-        log.info("Route planned for {}, algorithm={}, found={}, len={}, visited={}, elapsedMs={}",
-                carId, algorithm, result.isFound(), route.size(), result.getVisitedNodes(), result.getElapsedMillis());
+        log.info("Route planned for {}, algorithm={}, found={}, len={}, visited={}, elapsedMs={}, knownStaticObstacles={}, otherCars={}",
+                carId, algorithm, result.isFound(), route.size(), result.getVisitedNodes(), result.getElapsedMillis(),
+                knownStaticObstacles.size(), otherCarPositions.size());
         return route;
     }
 
@@ -138,6 +155,8 @@ public class NavigatorAgent {
                                     int visitedNodes,
                                     long elapsedMillis,
                                     int dynamicObstacleCount,
+                                    int knownStaticObstacleCount,
+                                    int totalBlockedCellCount,
                                     String reason) {
         Map<String, Object> metrics = new LinkedHashMap<>();
         metrics.put("type", "ROUTE_PLAN_METRICS");
@@ -148,6 +167,8 @@ public class NavigatorAgent {
         metrics.put("visitedNodes", visitedNodes);
         metrics.put("elapsedMs", elapsedMillis);
         metrics.put("dynamicObstacleCount", dynamicObstacleCount);
+        metrics.put("knownStaticObstacleCount", knownStaticObstacleCount);
+        metrics.put("totalBlockedCellCount", totalBlockedCellCount);
         metrics.put("reason", reason);
         metrics.put("time", System.currentTimeMillis());
         try {

@@ -418,8 +418,13 @@ public class ControllerAgent {
             return;
         }
 
+        board.clearRoute(carId);
         board.incrementBlockedCount(carId);
-        board.addLogEntry("WARN: " + carId + " blocked");
+
+        // 遇到障碍物后，重新规划当前目标
+        board.setStatus(carId, CarStatus.WAITING_ROUTE.name());
+
+        board.addLogEntry("WARN: " + carId + " blocked, replan route");
         mq.broadcastEvent(MQKeys.CMD_BLOCKED, jsonObjectToMap(data));
     }
 

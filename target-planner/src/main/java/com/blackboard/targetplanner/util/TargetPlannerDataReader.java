@@ -12,7 +12,8 @@ import java.util.Set;
 /**
  * TargetPlanner 的黑板读取辅助类。
  *
- * <p>这里刻意不读取 staticBlock/mapBlock，保证目标选择模块不提前知道静态障碍物。</p>
+ * <p>目标选择模块只读取已探索格子里的静态障碍物。具体做法是先看全局 mapView，只有某格已经被任意小车
+ * 探索过，才查询该格是否为障碍物。这样所有小车共享已经探索到的障碍信息，未探索区域仍保持未知。</p>
  */
 public class TargetPlannerDataReader {
     private final Blackboard board;
@@ -52,6 +53,23 @@ public class TargetPlannerDataReader {
         return result;
     }
 
+    /**
+     * 读取已知静态障碍物：只在已经探索过的格子里检查障碍。
+     */
+    public Set<Position> readKnownStaticObstacles(int mapWidth, int mapHeight) {
+        Set<Position> result = new HashSet<>();
+        boolean[] explored = board.getFullMapView();
+        for (int y = 0; y < mapHeight; y++) {
+            for (int x = 0; x < mapWidth; x++) {
+                if (!isExplored(explored, x, y, mapWidth)) continue;
+                if (board.hasObstacle(y, x)) {
+                    result.add(new Position(x, y));
+                }
+            }
+        }
+        return result;
+    }
+
     public List<String> readCarIds() {
         List<String> carIds = new ArrayList<>(board.getCarList());
         if (!carIds.isEmpty()) return carIds;
@@ -65,5 +83,11 @@ public class TargetPlannerDataReader {
             carIds.add("Car" + String.format("%03d", i));
         }
         return carIds;
+    }
+
+    private boolean isExplored(boolean[] explored, int x, int y, int mapWidth) {
+        if (explored == null) return false;
+        int idx = y * mapWidth + x;
+        return idx >= 0 && idx < explored.length && explored[idx];
     }
 }

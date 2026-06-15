@@ -2,6 +2,7 @@ package com.blackboard.targetplanner.service;
 
 import com.blackboard.model.Position;
 
+import java.util.Collections;
 import java.util.Set;
 
 /**
@@ -17,6 +18,7 @@ public class TargetSelectionContext {
     private final int mapHeight;
     private final Set<Position> occupiedByCars;
     private final Set<Position> reservedTargets;
+    private final Set<Position> knownObstacles;
 
     public TargetSelectionContext(String carId,
                                   Position carPosition,
@@ -25,13 +27,25 @@ public class TargetSelectionContext {
                                   int mapHeight,
                                   Set<Position> occupiedByCars,
                                   Set<Position> reservedTargets) {
+        this(carId, carPosition, explored, mapWidth, mapHeight, occupiedByCars, reservedTargets, Collections.emptySet());
+    }
+
+    public TargetSelectionContext(String carId,
+                                  Position carPosition,
+                                  boolean[] explored,
+                                  int mapWidth,
+                                  int mapHeight,
+                                  Set<Position> occupiedByCars,
+                                  Set<Position> reservedTargets,
+                                  Set<Position> knownObstacles) {
         this.carId = carId;
         this.carPosition = carPosition;
         this.explored = explored;
         this.mapWidth = mapWidth;
         this.mapHeight = mapHeight;
-        this.occupiedByCars = occupiedByCars;
-        this.reservedTargets = reservedTargets;
+        this.occupiedByCars = occupiedByCars == null ? Collections.emptySet() : occupiedByCars;
+        this.reservedTargets = reservedTargets == null ? Collections.emptySet() : reservedTargets;
+        this.knownObstacles = knownObstacles == null ? Collections.emptySet() : knownObstacles;
     }
 
     public String getCarId() {
@@ -60,5 +74,9 @@ public class TargetSelectionContext {
 
     public Set<Position> getReservedTargets() {
         return reservedTargets;
+    }
+
+    public Set<Position> getKnownObstacles() {
+        return knownObstacles;
     }
 }
