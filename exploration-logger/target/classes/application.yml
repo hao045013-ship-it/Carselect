@@ -10,7 +10,6 @@ server:
   port: 8083
 
 sqlserver:
-  # Integration note: use the database teammate's SQL Server host.
-  url: jdbc:sqlserver://192.168.107.132:1433;databaseName=ExplorationDB;encrypt=false;trustServerCertificate=true
+  url: jdbc:sqlserver://LAPTOP-LTTJ001U;databaseName=ExplorationDB;encrypt=false;trustServerCertificate=true
   username: sa
   password: yxy450716

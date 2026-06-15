@@ -21,11 +21,5 @@
         <dependency><groupId>com.blackboard</groupId><artifactId>stats-reporter</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>com.blackboard</groupId><artifactId>replay-logger</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>com.blackboard</groupId><artifactId>display</artifactId><version>${project.version}</version></dependency>
-        <dependency>
-            <groupId>com.blackboard</groupId>
-            <artifactId>obstacle-manager</artifactId>
-            <version>1.0-SNAPSHOT</version>
-            <scope>compile</scope>
-        </dependency>
     </dependencies>
 </project>
