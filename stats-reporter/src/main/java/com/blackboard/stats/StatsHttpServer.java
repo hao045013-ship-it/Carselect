@@ -103,7 +103,7 @@ public class StatsHttpServer {
 
         List<long[]> recentPoints = sqlPersistence.getRecentCoveragePoints(sessionId, PREDICTION_WINDOW);
         if (!recentPoints.isEmpty()) {
-            long[] latest = recentPoints.getLast();
+            long[] latest = recentPoints.get(recentPoints.size() - 1);
             exploredCells = (int) latest[1];
             currentCoverage = totalCells > 0 ? (double) exploredCells / totalCells : 0;
         }

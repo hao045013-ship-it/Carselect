@@ -46,6 +46,13 @@ var state = {
     connectedRobots: 0
 };
 
+/** 当前用户信息 */
+var currentUser = {
+    userId: null,
+    nickname: '未登录',
+    preferences: {}
+};
+
 /** 用于防闪烁 — 缓存上次机器人数据快照 */
 var _lastCarSnapshot = '';
 /** 趋势图覆盖率历史（本地记录，与 coverageHistory 互补） */
@@ -75,6 +82,7 @@ function init() {
     wireEvents();
     updateClock();
     setInterval(updateClock, 1000);
+    applySettingsToUI();
     initCanvasAndLayout();
     initTrendCanvas();
     tryConnectWebSocket();
@@ -104,6 +112,8 @@ function cacheDomReferences() {
     DOM.btnClearObs = document.getElementById('btnClearObs');
     DOM.manualToggle = document.getElementById('manualToggle');
     DOM.manualHint = document.getElementById('manualHint');
+    DOM.carPlaceToggle = document.getElementById('carPlaceToggle');
+    DOM.carPlaceHint = document.getElementById('carPlaceHint');
     DOM.mapImageInput = document.getElementById('mapImageInput');
     DOM.btnUploadMap = document.getElementById('btnUploadMap');
     DOM.mapImageInfo = document.getElementById('mapImageInfo');
@@ -112,9 +122,62 @@ function cacheDomReferences() {
     DOM.userAvatar = document.getElementById('userAvatar');
     DOM.headerUserName = document.getElementById('headerUserName');
 
+    // 登录弹窗
+    DOM.loginOverlay = document.getElementById('loginOverlay');
+    DOM.loginNickname = document.getElementById('loginNickname');
+    DOM.loginPassword = document.getElementById('loginPassword');
+    DOM.loginBtn = document.getElementById('loginBtn');
+    DOM.loginClose = document.getElementById('loginClose');
+    DOM.loginError = document.getElementById('loginError');
+    DOM.loginHint = document.getElementById('loginHint');
+
+    // 回放分析
+    DOM.replayPanel = document.getElementById('replayPanel');
+    DOM.replaySessionSelect = document.getElementById('replaySessionSelect');
+    DOM.replayBtnPlay = document.getElementById('replayBtnPlay');
+    DOM.replayBtnPause = document.getElementById('replayBtnPause');
+    DOM.replayBtnStop = document.getElementById('replayBtnStop');
+    DOM.replayBtnPrev = document.getElementById('replayBtnPrev');
+    DOM.replayBtnNext = document.getElementById('replayBtnNext');
+    DOM.replaySpeed = document.getElementById('replaySpeed');
+    DOM.replaySpeedVal = document.getElementById('replaySpeedVal');
+    DOM.replayFrameInfo = document.getElementById('replayFrameInfo');
+    DOM.replayCanvas = document.getElementById('replayCanvas');
+    DOM.replayCoverage = document.getElementById('replayCoverage');
+    DOM.replaySteps = document.getElementById('replaySteps');
+    DOM.replayTick = document.getElementById('replayTick');
+    DOM.replaySessionId = document.getElementById('replaySessionId');
+
+    // 系统设置
+    DOM.settingsPanel = document.getElementById('settingsPanel');
+    DOM.settingsSaveBtn = document.getElementById('settingsSaveBtn');
+    DOM.settingsResetBtn = document.getElementById('settingsResetBtn');
+    DOM.ucOldPwd = document.getElementById('ucOldPwd');
+    DOM.ucNewPwd = document.getElementById('ucNewPwd');
+    DOM.ucNewPwd2 = document.getElementById('ucNewPwd2');
+    DOM.ucChangePwdBtn = document.getElementById('ucChangePwdBtn');
+    DOM.ucPwdMsg = document.getElementById('ucPwdMsg');
+
+    // 用户中心
+    DOM.ucNickname = document.getElementById('ucNickname');
+    DOM.ucUserId = document.getElementById('ucUserId');
+    DOM.ucInfoId = document.getElementById('ucInfoId');
+    DOM.ucInfoNickname = document.getElementById('ucInfoNickname');
+    DOM.ucInfoCreated = document.getElementById('ucInfoCreated');
+    DOM.ucInfoLastLogin = document.getElementById('ucInfoLastLogin');
+    DOM.ucInfoSessions = document.getElementById('ucInfoSessions');
+    DOM.ucInfoReplays = document.getElementById('ucInfoReplays');
+    DOM.ucPrefsContainer = document.getElementById('ucPrefsContainer');
+    DOM.ucPrefKey = document.getElementById('ucPrefKey');
+    DOM.ucPrefValue = document.getElementById('ucPrefValue');
+    DOM.ucPrefSaveBtn = document.getElementById('ucPrefSaveBtn');
+    DOM.ucHistoryContainer = document.getElementById('ucHistoryContainer');
+    DOM.ucLogoutBtn = document.getElementById('ucLogoutBtn');
+
     // 中间
     DOM.centerPanel = document.getElementById('centerPanel');
     DOM.mapArea = document.getElementById('mapArea');
+    DOM.bottomPanels = document.getElementById('bottomPanels');
     DOM.canvasWrapper = document.getElementById('canvasWrapper');
     DOM.mapCanvas = document.getElementById('mapCanvas');
     DOM.cellTooltip = document.getElementById('cellTooltip');
@@ -371,11 +434,24 @@ function tryConnectWebSocket() {
     ws.onmessage = function (event) {
         try {
             var raw = JSON.parse(event.data);
-            normalizeState(raw);
-            if (state.status === STATUS_IDLE && state.tick > 0) {
-                state.status = STATUS_RUNNING;
-                state.startTimestamp = Date.now() - state.elapsedMs;
-                updateControlButtons();
+            // 障碍物刷新消息：只更新障碍物，不触发仿真
+            if (raw.type === 'obstacle_update') {
+                if (raw.staticBlock) state.staticBlock = raw.staticBlock;
+                if (raw.dynamicBlock) state.dynamicBlock = raw.dynamicBlock;
+                state.exploredPercent = raw.exploredPercent || 0;
+                stateDirty = true;
+                return;
+            }
+            // 命令响应（含 success 字段） vs 仿真状态广播
+            if (raw.success !== undefined) {
+                handleCommandResponse(raw);
+            } else {
+                normalizeState(raw);
+                if (state.status === STATUS_IDLE && state.tick > 0) {
+                    state.status = STATUS_RUNNING;
+                    state.startTimestamp = Date.now() - state.elapsedMs;
+                    updateControlButtons();
+                }
             }
         } catch (e) { addLog('error', 'JSON 解析失败: ' + e.message); }
     };
@@ -408,6 +484,95 @@ function sendCommand(cmd, data) {
     var payload = { command: cmd }; if (data) payload.data = data;
     if (ws && ws.readyState === WebSocket.OPEN) { ws.send(JSON.stringify(payload)); }
     else if (!isDemoMode) { addLog('warn', 'WebSocket 未连接，无法发送命令: ' + cmd); }
+}
+
+/** 处理后端返回的命令响应（用户操作等） */
+function handleCommandResponse(raw) {
+    if (raw.success) {
+        var data = raw.data || {};
+
+        // LOGIN 响应
+        if (data.userId && data.nickname) {
+            currentUser.userId = data.userId;
+            currentUser.nickname = data.nickname;
+            currentUser.preferences = data.preferences || {};
+            currentUser.createdAt = data.createdAt || null;
+            currentUser.lastLogin = data.lastLogin || null;
+            currentUser.sessionCount = data.sessionCount || 0;
+            currentUser.replayCount = data.replayCount || 0;
+            DOM.headerUserName.textContent = data.nickname;
+            DOM.loginBtn.disabled = false;
+            DOM.loginBtn.textContent = '登 录 / 注 册';
+            hideLoginModal();
+            addLog('success', data.message || ('登录成功: ' + data.nickname));
+        }
+        // LOGOUT 响应
+        else if (data.message && data.message.indexOf('登出') >= 0) {
+            currentUser.userId = null;
+            currentUser.nickname = '未登录';
+            currentUser.preferences = {};
+            DOM.headerUserName.textContent = '未登录';
+            addLog('info', data.message);
+        }
+        // UPDATE_NICKNAME 响应
+        else if (data.nickname !== undefined && !data.userId) {
+            currentUser.nickname = data.nickname;
+            DOM.headerUserName.textContent = data.nickname;
+            DOM.ucNickname.textContent = data.nickname;
+            DOM.ucInfoNickname.textContent = data.nickname;
+            addLog('success', data.message || '昵称已更新');
+        }
+        // SAVE_PREF 响应
+        else if (data.key !== undefined && data.value !== undefined) {
+            currentUser.preferences[data.key] = data.value;
+            addLog('success', '偏好已保存: ' + data.key);
+        }
+        // GET_PROFILE / GET_HISTORY 响应
+        else if (data.history || data.preferences !== undefined) {
+            if (data.preferences) currentUser.preferences = data.preferences;
+            if (data.history) {
+                var histHtml = '';
+                if (data.history.length === 0) {
+                    histHtml = '<p class="uc-empty">暂无会话记录</p>';
+                } else {
+                    data.history.forEach(function (h) {
+                        histHtml += '<div class="uc-history-item">';
+                        histHtml += '<span class="uc-history-id">' + escapeHtml(h.sessionId || '-') + '</span>';
+                        histHtml += '<span class="uc-history-time">' + escapeHtml(h.joinedAt || '-') + '</span>';
+                        histHtml += '<span>' + escapeHtml(h.mapSize || '-') + ' / ' + escapeHtml(String(h.carCount || '-')) + '辆</span>';
+                        histHtml += '<span class="uc-history-status">' + escapeHtml(h.status || '-') + '</span>';
+                        histHtml += '</div>';
+                    });
+                }
+                if (DOM.ucHistoryContainer) DOM.ucHistoryContainer.innerHTML = histHtml;
+            }
+            if (currentUser.userId) {
+                DOM.ucInfoCreated.textContent = currentUser.createdAt || '--';
+                DOM.ucInfoLastLogin.textContent = currentUser.lastLogin || '--';
+                DOM.ucInfoSessions.textContent = currentUser.sessionCount || '0';
+                DOM.ucInfoReplays.textContent = currentUser.replayCount || '0';
+            }
+        }
+        else if (data.message && data.message.indexOf('密码') >= 0) {
+            // CHANGE_PASSWORD 响应
+            DOM.ucOldPwd.value = ''; DOM.ucNewPwd.value = ''; DOM.ucNewPwd2.value = '';
+            DOM.ucPwdMsg.textContent = data.message;
+            DOM.ucPwdMsg.style.color = 'var(--accent-green)';
+            addLog('success', data.message);
+        }
+        else {
+            addLog('info', raw.data ? JSON.stringify(raw.data) : '操作完成');
+        }
+    } else {
+        addLog('error', raw.error || '操作失败');
+        DOM.loginBtn.disabled = false;
+        DOM.loginBtn.textContent = '登 录 / 注 册';
+        DOM.loginError.textContent = raw.error || '操作失败';
+        // 密码修改失败
+        if (raw.error && (raw.error.indexOf('密码') >= 0 || raw.error.indexOf('登录') >= 0)) {
+            if (DOM.ucPwdMsg) { DOM.ucPwdMsg.textContent = raw.error; DOM.ucPwdMsg.style.color = 'var(--accent-red)'; }
+        }
+    }
 }
 
 // ==================== 演示模式 ====================
@@ -701,7 +866,7 @@ function getStatusText(status) {
 // ==================== 事件处理 ====================
 
 function wireEvents() {
-    // 导航标签
+    // 导航标签切换
     if (DOM.navTabs) {
         DOM.navTabs.addEventListener('click', function (e) {
             var tab = e.target.closest('.nav-tab');
@@ -709,22 +874,80 @@ function wireEvents() {
             DOM.navTabs.querySelectorAll('.nav-tab').forEach(function (t) { t.classList.remove('active'); });
             tab.classList.add('active');
             var tabName = tab.getAttribute('data-tab');
-            addLog('info', '切换到: ' + tab.textContent);
-            // 目前只有实时系统有完整 UI；其他标签可后续扩展
+            hideAllCenterPanels();
+            switch (tabName) {
+                case 'user':     showUserCenter(); break;
+                case 'replay':   showReplayPanel(); break;
+                case 'settings': showSettingsPanel(); break;
+                default:         showMapView(); break;
+            }
         });
     }
 
+    // 头像点击 → 登录弹窗
+    DOM.userAvatar.addEventListener('click', function () {
+        if (currentUser.userId) {
+            showUserCenter();
+        } else {
+            showLoginModal();
+        }
+    });
+
+    // 登录弹窗事件
+    DOM.loginClose.addEventListener('click', hideLoginModal);
+    DOM.loginOverlay.addEventListener('click', function (e) {
+        if (e.target === DOM.loginOverlay) hideLoginModal();
+    });
+    DOM.loginBtn.addEventListener('click', doLogin);
+    DOM.loginNickname.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { DOM.loginPassword.focus(); e.preventDefault(); }
+        DOM.loginError.textContent = '';
+    });
+    DOM.loginPassword.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') doLogin();
+        DOM.loginError.textContent = '';
+    });
+
+    // 用户中心事件
+    DOM.ucLogoutBtn.addEventListener('click', doLogout);
+    DOM.ucPrefSaveBtn.addEventListener('click', saveUserPreference);
+
     DOM.btnStart.addEventListener('click', function () {
-        if (isDemoMode) { state.status = STATUS_RUNNING; demoStartTime = Date.now(); addLog('success', '仿真已启动（演示模式）'); }
-        else if (wsConnected) { sendCommand('START'); state.status = STATUS_RUNNING; state.startTimestamp = Date.now() - state.elapsedMs; addLog('success', '仿真已启动'); }
-        else { startDemoMode(); }
+        if (wsConnected) {
+            // 真实模式 → 发 START 命令到后端 SimulationController
+            var params = {
+                robotCount: parseInt(DOM.robotCount.value) || 5,
+                mapWidth: parseInt(DOM.mapWidth.value) || 26,
+                mapHeight: parseInt(DOM.mapHeight.value) || 16,
+                density: parseInt(DOM.obstacleDensity.value) || 25
+            };
+            state.mapWidth = params.mapWidth;
+            state.mapHeight = params.mapHeight;
+            state.status = STATUS_RUNNING;
+            state.startTimestamp = Date.now();
+            state.elapsedMs = 0;
+            sendCommand('START', params);
+            addLog('success', '仿真已启动（' + params.robotCount + '辆, ' + params.mapWidth + '×' + params.mapHeight + '）');
+        } else if (isDemoMode) {
+            state.status = STATUS_RUNNING;
+            demoStartTime = Date.now();
+            addLog('success', '仿真已启动（演示模式）');
+        } else {
+            startDemoMode();
+        }
         updateControlButtons(); updateStatusBar(); updateSystemInfo();
     });
 
     DOM.btnPause.addEventListener('click', function () {
         state.status = STATUS_PAUSED;
-        if (isDemoMode) { demoElapsedBeforePause = state.elapsedMs; demoStartTime = null; addLog('info', '仿真已暂停（演示模式）'); }
-        else { sendCommand('PAUSE'); addLog('info', '仿真已暂停'); }
+        if (isDemoMode) {
+            demoElapsedBeforePause = state.elapsedMs;
+            demoStartTime = null;
+            addLog('info', '仿真已暂停（演示模式）');
+        } else if (wsConnected) {
+            sendCommand('PAUSE');
+            addLog('info', '仿真已暂停');
+        }
         updateControlButtons(); updateStatusBar(); updateSystemInfo();
     });
 
@@ -747,7 +970,13 @@ function wireEvents() {
 
     DOM.speedSlider.addEventListener('input', function () {
         DOM.speedValue.textContent = this.value + 'x';
-        if (isDemoMode && demoInterval) { clearInterval(demoInterval); demoInterval = setInterval(demoTick, Math.max(30, DEMO_TICK_MS - (parseInt(this.value) - 1) * 15)); }
+        if (isDemoMode && demoInterval) {
+            clearInterval(demoInterval);
+            demoInterval = setInterval(demoTick, Math.max(30, DEMO_TICK_MS - (parseInt(this.value) - 1) * 15));
+        }
+        if (wsConnected) {
+            sendCommand('SET_SPEED', { speed: parseInt(this.value) });
+        }
     });
     DOM.obstacleDensity.addEventListener('input', function () { DOM.densityValue.textContent = this.value + '%'; });
 
@@ -759,16 +988,29 @@ function wireEvents() {
             while (obsPlaced < obsTarget) { var ri = Math.floor(Math.random() * tc); if (!state.staticBlock[ri]) { state.staticBlock[ri] = true; obsPlaced++; } }
             state.obstacleCount = obsPlaced;
             addLog('success', '已随机生成 ' + obsPlaced + ' 个障碍物（密度 ' + density + '%）'); stateDirty = true;
-        } else { sendCommand('RANDOM_OBSTACLE', { density: density }); }
+        } else if (wsConnected) {
+            sendCommand('RANDOM_OBSTACLE', { density: density });
+            addLog('info', '已发送随机障碍物命令（密度 ' + density + '%）');
+        }
         updateStatistics(); updateSystemInfo();
     });
     DOM.btnClearObs.addEventListener('click', function () {
-        if (isDemoMode) { state.staticBlock = new Array(state.mapWidth * state.mapHeight).fill(false); state.obstacleCount = 0; addLog('success', '已清除全部障碍物'); stateDirty = true; }
-        else { sendCommand('CLEAR_OBSTACLE'); }
+        if (isDemoMode) {
+            state.staticBlock = new Array(state.mapWidth * state.mapHeight).fill(false);
+            state.obstacleCount = 0; addLog('success', '已清除全部障碍物'); stateDirty = true;
+        } else if (wsConnected) {
+            sendCommand('CLEAR_OBSTACLE');
+            addLog('info', '已发送清除障碍物命令');
+        }
         updateStatistics(); updateSystemInfo();
     });
     DOM.manualToggle.addEventListener('change', function () {
-        DOM.manualHint.textContent = this.checked ? '点击地图格子可添加/移除障碍物（按住 Shift 添加动态障碍）' : '开启后可点击地图格子添加/移除障碍物';
+        DOM.manualHint.textContent = this.checked ? '点击地图格子可添加/移除障碍物（按住 Shift 添加动态障碍）' : '开启后可点击添加/移除障碍物';
+        if (this.checked) DOM.carPlaceToggle.checked = false; // 互斥
+    });
+    DOM.carPlaceToggle.addEventListener('change', function () {
+        DOM.carPlaceHint.textContent = this.checked ? '点击地图格子放置小车（Ctrl+点击移除）' : '开启后可点击地图放置小车';
+        if (this.checked) DOM.manualToggle.checked = false; // 互斥
     });
     // ---- 地图背景上传 ----
     DOM.btnUploadMap.addEventListener('click', function () {
@@ -804,16 +1046,6 @@ function wireEvents() {
         addLog('info', '已移除地图背景');
     });
 
-    DOM.userAvatar.addEventListener('click', function () {
-        var currentName = DOM.headerUserName.textContent;
-        var nickname = prompt('请输入您的昵称：', currentName !== '未登录' ? currentName : '');
-        if (nickname && nickname.trim()) {
-            DOM.headerUserName.textContent = nickname.trim();
-            addLog('info', '已切换用户: ' + nickname.trim());
-            if (wsConnected) sendCommand('LOGIN', { nickname: nickname.trim() });
-        }
-    });
-
     // 画布悬停
     DOM.mapCanvas.addEventListener('mousemove', function (e) {
         var rect = DOM.mapCanvas.getBoundingClientRect();
@@ -837,17 +1069,42 @@ function wireEvents() {
     });
     DOM.mapCanvas.addEventListener('mouseleave', function () { DOM.cellTooltip.classList.remove('visible'); });
 
-    // 手动编辑障碍物
+    // 地图点击——障碍物编辑 / 小车部署
     DOM.mapCanvas.addEventListener('click', function (e) {
-        if (!DOM.manualToggle.checked) return;
         var rect = DOM.mapCanvas.getBoundingClientRect();
         var cell = getCellAt(DOM.mapCanvas, e.clientX - rect.left, e.clientY - rect.top, layout, state.mapWidth, state.mapHeight);
         if (!cell) return;
         var idx = cell.row * state.mapWidth + cell.col;
-        if (e.shiftKey) { state.dynamicBlock[idx] = !state.dynamicBlock[idx]; addLog('debug', (state.dynamicBlock[idx] ? '添加' : '移除') + ' 动态障碍物 (' + cell.col + ', ' + cell.row + ')'); }
-        else { state.staticBlock[idx] = !state.staticBlock[idx]; state.obstacleCount += state.staticBlock[idx] ? 1 : -1; state.obstacleCount = Math.max(0, state.obstacleCount); addLog('debug', (state.staticBlock[idx] ? '添加' : '移除') + ' 障碍物 (' + cell.col + ', ' + cell.row + ')'); }
-        stateDirty = true;
-        updateStatistics(); updateSystemInfo();
+
+        // 模式1：小车部署
+        if (DOM.carPlaceToggle.checked) {
+            if (e.ctrlKey || e.metaKey) {
+                // Ctrl+点击 → 移除小车
+                removeCarAt(cell.col, cell.row);
+            } else {
+                // 点击 → 添加小车
+                addCarAt(cell.col, cell.row);
+            }
+            return;
+        }
+
+        // 模式2：障碍物编辑
+        if (DOM.manualToggle.checked) {
+            if (e.shiftKey) {
+                state.dynamicBlock[idx] = !state.dynamicBlock[idx];
+                addLog('debug', (state.dynamicBlock[idx] ? '添加' : '移除') + ' 动态障碍物 (' + cell.col + ', ' + cell.row + ')');
+                if (wsConnected && !isDemoMode) sendCommand('SET_OBSTACLE', { row: cell.row, col: cell.col, value: state.dynamicBlock[idx] });
+            } else {
+                state.staticBlock[idx] = !state.staticBlock[idx];
+                state.obstacleCount += state.staticBlock[idx] ? 1 : -1;
+                state.obstacleCount = Math.max(0, state.obstacleCount);
+                addLog('debug', (state.staticBlock[idx] ? '添加' : '移除') + ' 障碍物 (' + cell.col + ', ' + cell.row + ')');
+                if (wsConnected && !isDemoMode) sendCommand('SET_OBSTACLE', { row: cell.row, col: cell.col, value: state.staticBlock[idx] });
+            }
+            stateDirty = true;
+            updateStatistics(); updateSystemInfo();
+            return;
+        }
     });
 
     window.addEventListener('resize', function () {
@@ -857,6 +1114,491 @@ function wireEvents() {
         if (e.key === ' ') { e.preventDefault(); if (state.status === STATUS_RUNNING) DOM.btnPause.click(); else DOM.btnStart.click(); }
         if ((e.key === 'r' || e.key === 'R') && e.ctrlKey) { e.preventDefault(); DOM.btnReset.click(); }
     });
+}
+
+// ==================== 登录弹窗 ====================
+
+function showLoginModal() {
+    DOM.loginOverlay.style.display = 'flex';
+    DOM.loginNickname.value = '';
+    DOM.loginPassword.value = '';
+    DOM.loginError.textContent = '';
+    DOM.loginHint.textContent = '已有账号输入昵称+密码登录，新用户自动注册';
+    setTimeout(function () { DOM.loginNickname.focus(); }, 100);
+}
+
+function hideLoginModal() {
+    DOM.loginOverlay.style.display = 'none';
+}
+
+function doLogin() {
+    var nickname = DOM.loginNickname.value.trim();
+    var password = DOM.loginPassword.value;
+    if (!nickname) {
+        DOM.loginError.textContent = '请输入昵称';
+        return;
+    }
+    if (!password) {
+        DOM.loginError.textContent = '请输入密码';
+        return;
+    }
+    if (password.length < 6) {
+        DOM.loginError.textContent = '密码至少需要6位';
+        return;
+    }
+    if (!wsConnected) {
+        DOM.loginError.textContent = 'WebSocket 未连接，无法登录';
+        return;
+    }
+    DOM.loginBtn.disabled = true;
+    DOM.loginBtn.textContent = '处理中...';
+    sendCommand('LOGIN', { nickname: nickname, password: password });
+}
+
+// ==================== 用户中心 ====================
+
+function hideAllCenterPanels() {
+    // 直接用 getElementById 避免 DOM 缓存问题
+    var panels = ['mapArea', 'bottomPanels', 'userCenterPanel', 'replayPanel', 'settingsPanel'];
+    panels.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+    });
+}
+
+function showUserCenter() {
+    DOM.navTabs.querySelectorAll('.nav-tab').forEach(function (t) { t.classList.remove('active'); });
+    var userTab = DOM.navTabs.querySelector('[data-tab="user"]');
+    if (userTab) userTab.classList.add('active');
+
+    hideAllCenterPanels();
+    var panel = document.getElementById('userCenterPanel');
+    if (!panel) return;
+    panel.style.display = 'flex';
+    initPasswordEvents();
+    loadUserProfile();
+}
+
+function showMapView() {
+    DOM.navTabs.querySelectorAll('.nav-tab').forEach(function (t) { t.classList.remove('active'); });
+    var realtimeTab = DOM.navTabs.querySelector('[data-tab="realtime"]');
+    if (realtimeTab) realtimeTab.classList.add('active');
+
+    hideAllCenterPanels();
+    var mapArea = document.getElementById('mapArea');
+    var bottomPanels = document.getElementById('bottomPanels');
+    if (mapArea) mapArea.style.display = '';
+    if (bottomPanels) bottomPanels.style.display = '';
+}
+
+function loadUserProfile() {
+    // 有当前用户：加载详情
+    if (currentUser.userId) {
+        DOM.ucNickname.textContent = currentUser.nickname;
+        DOM.ucUserId.textContent = 'ID: ' + currentUser.userId;
+        DOM.ucInfoId.textContent = currentUser.userId;
+        DOM.ucInfoNickname.textContent = currentUser.nickname;
+
+        // 用 cookie（临时缓存）或默认值填充
+        DOM.ucInfoCreated.textContent = currentUser.createdAt || '--';
+        DOM.ucInfoLastLogin.textContent = currentUser.lastLogin || '--';
+        DOM.ucInfoSessions.textContent = currentUser.sessionCount || '0';
+        DOM.ucInfoReplays.textContent = currentUser.replayCount || '0';
+
+        renderPreferences();
+        DOM.ucHistoryContainer.innerHTML = '<p class="uc-empty">加载中...</p>';
+        if (wsConnected) {
+            sendCommand('GET_HISTORY');
+        }
+    } else {
+        DOM.ucNickname.textContent = '未登录';
+        DOM.ucUserId.textContent = 'ID: --';
+        DOM.ucInfoId.textContent = '--';
+        DOM.ucInfoNickname.textContent = '--';
+        DOM.ucInfoCreated.textContent = '--';
+        DOM.ucInfoLastLogin.textContent = '--';
+        DOM.ucInfoSessions.textContent = '0';
+        DOM.ucInfoReplays.textContent = '0';
+        DOM.ucPrefsContainer.innerHTML = '<p class="uc-empty">请先登录</p>';
+        DOM.ucHistoryContainer.innerHTML = '<p class="uc-empty">请先登录</p>';
+    }
+}
+
+function renderPreferences() {
+    var keys = Object.keys(currentUser.preferences).filter(function(k) { return k !== '__pwd'; });
+    if (keys.length === 0) {
+        DOM.ucPrefsContainer.innerHTML = '<p class="uc-empty">暂无偏好设置</p>';
+        return;
+    }
+    var html = '';
+    keys.forEach(function (k) {
+        html += '<div class="uc-pref-item">';
+        html += '<span class="uc-pref-key">' + escapeHtml(k) + '</span>';
+        html += '<span class="uc-pref-value">' + escapeHtml(String(currentUser.preferences[k])) + '</span>';
+        html += '<button class="uc-pref-remove" data-key="' + escapeHtml(k) + '" title="删除">✕</button>';
+        html += '</div>';
+    });
+    DOM.ucPrefsContainer.innerHTML = html;
+
+    // 删除偏好事件
+    DOM.ucPrefsContainer.querySelectorAll('.uc-pref-remove').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var key = btn.getAttribute('data-key');
+            sendCommand('SAVE_PREF', { key: key, value: '' });
+            delete currentUser.preferences[key];
+            renderPreferences();
+        });
+    });
+}
+
+function saveUserPreference() {
+    var key = DOM.ucPrefKey.value.trim();
+    var value = DOM.ucPrefValue.value.trim();
+    if (!key) { addLog('warn', '请输入偏好键名'); return; }
+    if (!wsConnected) { addLog('warn', 'WebSocket 未连接'); return; }
+    sendCommand('SAVE_PREF', { key: key, value: value });
+    currentUser.preferences[key] = value;
+    DOM.ucPrefKey.value = '';
+    DOM.ucPrefValue.value = '';
+    renderPreferences();
+    addLog('success', '偏好已保存: ' + key);
+}
+
+function doLogout() {
+    if (!currentUser.userId) return;
+    if (wsConnected) sendCommand('LOGOUT');
+    currentUser.userId = null;
+    currentUser.nickname = '未登录';
+    currentUser.preferences = {};
+    currentUser.createdAt = null;
+    currentUser.lastLogin = null;
+    currentUser.sessionCount = 0;
+    currentUser.replayCount = 0;
+    DOM.headerUserName.textContent = '未登录';
+    DOM.ucNickname.textContent = '未登录';
+    DOM.ucUserId.textContent = 'ID: --';
+    showMapView();
+    addLog('info', '已退出登录');
+}
+
+// ==================== 回放分析 ====================
+
+/** 回放快照缓存 */
+var replaySnapshots = [];
+var replayPlaying = false;
+var replayInterval = null;
+var replayFrameIdx = 0;
+var replayLayout = null;
+
+function showReplayPanel() {
+    DOM.replayPanel.style.display = 'flex';
+    initReplayEvents();
+    refreshReplaySessions();
+    if (!replayLayout) initReplayCanvas();
+}
+
+function refreshReplaySessions() {
+    var sel = DOM.replaySessionSelect;
+    sel.innerHTML = '<option value="">-- 选择会话 --</option>';
+    // 当前仿真会话（如果有 tick 数据）
+    if (state.tick > 0) {
+        sel.innerHTML += '<option value="current">当前会话 (Tick 0-' + state.tick + ')</option>';
+    }
+    // 从 coverageHistory 读取历史（实际应从 Redis 获取）
+    if (state.coverageHistory && state.coverageHistory.length > 0) {
+        sel.innerHTML += '<option value="last">上次会话 (' + state.coverageHistory.length + ' 个快照)</option>';
+    }
+}
+
+function initReplayCanvas() {
+    var canvas = DOM.replayCanvas;
+    var wrap = canvas.parentElement;
+    var dpr = window.devicePixelRatio || 1;
+    canvas.width = wrap.clientWidth * dpr;
+    canvas.height = wrap.clientHeight * dpr;
+    canvas.style.width = wrap.clientWidth + 'px';
+    canvas.style.height = wrap.clientHeight + 'px';
+    replayLayout = calcLayout(wrap.clientWidth, wrap.clientHeight, state.mapWidth || 26, state.mapHeight || 16);
+}
+
+// 回放控制按钮（延迟注册）
+function initReplayEvents() {
+    if (!DOM.replayBtnPrev || DOM.replayBtnPrev._wired) return;
+    DOM.replayBtnPrev._wired = true;
+    DOM.replayBtnPrev.addEventListener('click', function () { replaySeek(-1); });
+    DOM.replayBtnNext.addEventListener('click', function () { replaySeek(1); });
+    DOM.replayBtnPlay.addEventListener('click', startReplay);
+    DOM.replayBtnPause.addEventListener('click', pauseReplay);
+    DOM.replayBtnStop.addEventListener('click', stopReplay);
+    DOM.replaySpeed.addEventListener('input', function () {
+        DOM.replaySpeedVal.textContent = this.value + 'x';
+        if (replayPlaying) { pauseReplay(); startReplay(); }
+    });
+    DOM.replaySessionSelect.addEventListener('change', function () {
+        loadReplaySession(this.value);
+    });
+}
+
+function loadReplaySession(sessionId) {
+    if (!sessionId) { replaySnapshots = []; replayFrameIdx = 0; updateReplayFrame(); return; }
+    stopReplay();
+    // 模拟加载快照（实际从 Redis / MQ 获取）
+    var snaps = [];
+    var total = state.coverageHistory.length || state.tick;
+    if (total === 0) { addLog('warn', '暂无回放数据'); return; }
+    for (var i = 0; i < Math.min(total, 100); i++) {
+        snaps.push({
+            tick: i,
+            coverage: state.coverageHistory[i] ? parseFloat(state.coverageHistory[i].split(',')[1]) : state.exploredPercent * (i / total),
+            staticBlock: state.staticBlock,
+            cars: JSON.parse(JSON.stringify(state.cars))
+        });
+    }
+    replaySnapshots = snaps;
+    replayFrameIdx = 0;
+    updateReplayFrame();
+    addLog('success', '已加载 ' + snaps.length + ' 帧回放数据');
+}
+
+function startReplay() {
+    if (replaySnapshots.length === 0) { addLog('warn', '请先选择会话'); return; }
+    if (replayFrameIdx >= replaySnapshots.length - 1) replayFrameIdx = 0;
+    replayPlaying = true;
+    DOM.replayBtnPlay.disabled = true;
+    DOM.replayBtnPause.disabled = false;
+    DOM.replayBtnStop.disabled = false;
+    var speed = parseInt(DOM.replaySpeed.value) || 3;
+    var interval = Math.max(30, 400 - speed * 35);
+    replayInterval = setInterval(function () { replaySeek(1); }, interval);
+}
+
+function pauseReplay() {
+    replayPlaying = false;
+    DOM.replayBtnPlay.disabled = false;
+    DOM.replayBtnPause.disabled = true;
+    if (replayInterval) { clearInterval(replayInterval); replayInterval = null; }
+}
+
+function stopReplay() {
+    pauseReplay();
+    replayFrameIdx = 0;
+    updateReplayFrame();
+    DOM.replayBtnStop.disabled = true;
+    DOM.replayBtnPause.disabled = true;
+    DOM.replayBtnPlay.disabled = false;
+}
+
+function replaySeek(delta) {
+    if (replaySnapshots.length === 0) return;
+    replayFrameIdx = Math.max(0, Math.min(replaySnapshots.length - 1, replayFrameIdx + delta));
+    updateReplayFrame();
+    if (replayFrameIdx >= replaySnapshots.length - 1) stopReplay();
+}
+
+function updateReplayFrame() {
+    if (replaySnapshots.length === 0 || !replayLayout) {
+        DOM.replayFrameInfo.textContent = '0/0';
+        return;
+    }
+    DOM.replayFrameInfo.textContent = (replayFrameIdx + 1) + '/' + replaySnapshots.length;
+    var frame = replaySnapshots[replayFrameIdx];
+    DOM.replayCoverage.textContent = (frame.coverage || 0).toFixed(1) + '%';
+    DOM.replayTick.textContent = frame.tick || 0;
+
+    var totalSteps = 0;
+    if (frame.cars) {
+        Object.keys(frame.cars).forEach(function (id) { totalSteps += (frame.cars[id].stepsWalked || 0); });
+    }
+    DOM.replaySteps.textContent = totalSteps;
+
+    // 渲染回放地图
+    var canvas = DOM.replayCanvas;
+    var ctx = canvas.getContext('2d');
+    var dpr = window.devicePixelRatio || 1;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#061529';
+    ctx.fillRect(0, 0, canvas.width / dpr, canvas.height / dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    var simState = {
+        mapWidth: state.mapWidth || 26,
+        mapHeight: state.mapHeight || 16,
+        mapView: state.mapView,
+        staticBlock: frame.staticBlock || state.staticBlock,
+        dynamicBlock: state.dynamicBlock,
+        exploredPercent: frame.coverage || 0,
+        cars: frame.cars || {}
+    };
+    renderAll(canvas, simState, replayLayout);
+}
+
+// ==================== 系统设置 ====================
+
+/** 默认设置 */
+var defaultSettings = {
+    redisHost: 'localhost', redisPort: 6379,
+    mqHost: 'localhost', mqPort: 5672,
+    mapWidth: 26, mapHeight: 16,
+    robotCount: 5, density: 25,
+    algorithm: 'BFS'
+};
+
+function showSettingsPanel() {
+    DOM.settingsPanel.style.display = 'flex';
+    initSettingsEvents();
+    var s = loadSettings();
+    document.getElementById('setRedisHost').value = s.redisHost;
+    document.getElementById('setRedisPort').value = s.redisPort;
+    document.getElementById('setMqHost').value = s.mqHost;
+    document.getElementById('setMqPort').value = s.mqPort;
+    document.getElementById('setMapWidth').value = s.mapWidth;
+    document.getElementById('setMapHeight').value = s.mapHeight;
+    document.getElementById('setRobotCount').value = s.robotCount;
+    document.getElementById('setDensity').value = s.density;
+    var algoRadio = document.querySelector('input[name="algorithm"][value="' + s.algorithm + '"]');
+    if (algoRadio) algoRadio.checked = true;
+}
+
+function loadSettings() {
+    try {
+        var saved = localStorage.getItem('bbSimSettings');
+        if (saved) { var parsed = JSON.parse(saved); return Object.assign({}, defaultSettings, parsed); }
+    } catch (e) {}
+    return Object.assign({}, defaultSettings);
+}
+
+function saveSettings() {
+    var s = {
+        redisHost: document.getElementById('setRedisHost').value.trim() || 'localhost',
+        redisPort: parseInt(document.getElementById('setRedisPort').value) || 6379,
+        mqHost: document.getElementById('setMqHost').value.trim() || 'localhost',
+        mqPort: parseInt(document.getElementById('setMqPort').value) || 5672,
+        mapWidth: parseInt(document.getElementById('setMapWidth').value) || 26,
+        mapHeight: parseInt(document.getElementById('setMapHeight').value) || 16,
+        robotCount: parseInt(document.getElementById('setRobotCount').value) || 5,
+        density: parseInt(document.getElementById('setDensity').value) || 25,
+        algorithm: document.querySelector('input[name="algorithm"]:checked')?.value || 'BFS'
+    };
+    localStorage.setItem('bbSimSettings', JSON.stringify(s));
+    // 同步到偏好设置
+    if (wsConnected && currentUser.userId) {
+        sendCommand('SAVE_PREF', { key: 'settings', value: JSON.stringify(s) });
+    }
+    addLog('success', '设置已保存');
+}
+
+function resetSettings() {
+    localStorage.removeItem('bbSimSettings');
+    showSettingsPanel();
+    addLog('info', '设置已恢复默认');
+}
+
+function initSettingsEvents() {
+    if (!DOM.settingsSaveBtn || DOM.settingsSaveBtn._wired) return;
+    DOM.settingsSaveBtn._wired = true;
+    DOM.settingsSaveBtn.addEventListener('click', saveSettings);
+    DOM.settingsResetBtn.addEventListener('click', resetSettings);
+}
+
+function initPasswordEvents() {
+    if (!DOM.ucChangePwdBtn || DOM.ucChangePwdBtn._wired) return;
+    DOM.ucChangePwdBtn._wired = true;
+    DOM.ucChangePwdBtn.addEventListener('click', function () {
+        var oldPwd = DOM.ucOldPwd.value;
+        var newPwd = DOM.ucNewPwd.value;
+        var newPwd2 = DOM.ucNewPwd2.value;
+        if (!oldPwd) { DOM.ucPwdMsg.textContent = '请输入当前密码'; return; }
+        if (!newPwd || newPwd.length < 6) { DOM.ucPwdMsg.textContent = '新密码至少6位'; return; }
+        if (newPwd !== newPwd2) { DOM.ucPwdMsg.textContent = '两次密码不一致'; return; }
+        if (!wsConnected) { DOM.ucPwdMsg.textContent = 'WebSocket 未连接'; return; }
+        sendCommand('CHANGE_PASSWORD', { oldPassword: oldPwd, newPassword: newPwd });
+        DOM.ucPwdMsg.textContent = '处理中...';
+        DOM.ucPwdMsg.style.color = 'var(--accent-cyan)';
+    });
+}
+
+// 启动时加载设置到界面
+function applySettingsToUI() {
+    try {
+        var s = loadSettings();
+        if (DOM.mapWidth && s.mapWidth != null) DOM.mapWidth.value = s.mapWidth;
+        if (DOM.mapHeight && s.mapHeight != null) DOM.mapHeight.value = s.mapHeight;
+        if (DOM.robotCount && s.robotCount != null) DOM.robotCount.value = s.robotCount;
+        if (DOM.obstacleDensity && s.density != null) DOM.obstacleDensity.value = s.density;
+    } catch(e) { console.log('applySettingsToUI skipped:', e.message); }
+}
+
+// ==================== 小车手动部署 ====================
+
+function addCarAt(col, row) {
+    // 检查数量上限
+    var maxCars = parseInt(DOM.robotCount.value) || 5;
+    var currentCount = Object.keys(state.cars).length;
+    if (currentCount >= maxCars) {
+        addLog('warn', '已达到机器人数量上限 ' + maxCars + ' 辆，请先移除或调大数量');
+        return;
+    }
+    var idx = row * state.mapWidth + col;
+    // 不能放在障碍物上
+    if (state.staticBlock[idx]) { addLog('warn', '不能放在障碍物上 (' + col + ', ' + row + ')'); return; }
+    // 不能放在已有小车上
+    var carExists = false;
+    Object.keys(state.cars).forEach(function (cid) {
+        var c = state.cars[cid];
+        if (c.position.x === col && c.position.y === row) carExists = true;
+    });
+    if (carExists) { addLog('warn', '该位置已有小车 (' + col + ', ' + row + ')'); return; }
+
+    // 生成新 ID
+    var nextNum = Object.keys(state.cars).length + 1;
+    var carId = 'Car' + String(nextNum).padStart(3, '0');
+    while (state.cars[carId]) {
+        nextNum++;
+        carId = 'Car' + String(nextNum).padStart(3, '0');
+    }
+
+    state.cars[carId] = {
+        carId: carId,
+        position: { x: col, y: row },
+        target: null,
+        routeList: [],
+        status: 'IDLE',
+        stepsWalked: 0,
+        battery: 100
+    };
+    state.connectedRobots = Object.keys(state.cars).length;
+    stateDirty = true;
+    _lastCarSnapshot = '';
+    _lastStepsSnapshot = '';
+    updateRobotCards();
+    updateStepsStats();
+    addLog('success', '已部署小车 ' + carId + ' 位置 (' + col + ', ' + row + ')');
+    // 同步到后端
+    if (wsConnected) {
+        sendCommand('ADD_CAR', { carId: carId, x: col, y: row });
+    }
+}
+
+function removeCarAt(col, row) {
+    var found = null;
+    Object.keys(state.cars).forEach(function (cid) {
+        var c = state.cars[cid];
+        if (c.position.x === col && c.position.y === row) found = cid;
+    });
+    if (!found) { addLog('warn', '该位置没有小车 (' + col + ', ' + row + ')'); return; }
+    var removed = state.cars[found];
+    delete state.cars[found];
+    state.connectedRobots = Object.keys(state.cars).length;
+    stateDirty = true;
+    _lastCarSnapshot = '';
+    _lastStepsSnapshot = '';
+    updateRobotCards();
+    updateStepsStats();
+    addLog('info', '已移除小车 ' + found + ' 位置 (' + col + ', ' + row + ')');
+    if (wsConnected) {
+        sendCommand('REMOVE_CAR', { carId: found });
+    }
 }
 
 // ==================== 渲染循环 ====================

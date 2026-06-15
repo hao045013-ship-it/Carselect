@@ -8,6 +8,30 @@
 </head>
 <body>
 
+    <!-- ==================== 登录弹窗 ==================== -->
+    <div id="loginOverlay" class="login-overlay" style="display:none;">
+        <div class="login-card">
+            <div class="login-card-header">
+                <span class="login-card-icon">👤</span>
+                <span class="login-card-title" id="loginCardTitle">用户登录</span>
+                <button class="login-close" id="loginClose">✕</button>
+            </div>
+            <div class="login-card-body">
+                <div class="login-field">
+                    <label for="loginNickname">昵称</label>
+                    <input type="text" id="loginNickname" class="login-input" placeholder="请输入昵称" maxlength="20" autocomplete="off">
+                </div>
+                <div class="login-field">
+                    <label for="loginPassword">密码</label>
+                    <input type="password" id="loginPassword" class="login-input" placeholder="请输入密码（6-20位）" maxlength="20" autocomplete="off">
+                </div>
+                <p class="login-hint" id="loginHint">已有账号？输入昵称+密码登录。新用户？输入昵称+密码自动注册。</p>
+                <button class="login-btn" id="loginBtn">登 录 / 注 册</button>
+                <p class="login-error" id="loginError"></p>
+            </div>
+        </div>
+    </div>
+
 <!-- ==================== 顶部标题栏 ==================== -->
 <header id="mainHeader">
     <div class="header-left">
@@ -81,12 +105,7 @@
             <div class="card-body">
                 <div class="param-row">
                     <label for="robotCount">机器人数量</label>
-                    <select id="robotCount" class="sim-select">
-                        <option value="3">3 辆</option>
-                        <option value="5" selected>5 辆</option>
-                        <option value="8">8 辆</option>
-                        <option value="10">10 辆</option>
-                    </select>
+                    <input type="number" id="robotCount" class="sim-input" value="5" min="1" max="20" step="1">
                 </div>
                 <div class="param-row">
                     <label>障碍物密度</label>
@@ -119,13 +138,21 @@
                     <span class="btn-icon">✕</span> 清除全部障碍物
                 </button>
                 <div class="param-row toggle-row">
-                    <label for="manualToggle">手动编辑模式</label>
+                    <label for="manualToggle">障碍物编辑</label>
                     <label class="toggle-switch">
                         <input type="checkbox" id="manualToggle">
                         <span class="toggle-slider"></span>
                     </label>
                 </div>
-                <p class="hint-text" id="manualHint">开启后可点击地图格子添加/移除障碍物</p>
+                <p class="hint-text" id="manualHint">开启后点击地图添加/移除障碍物（按住 Shift 添加动态障碍）</p>
+                <div class="param-row toggle-row">
+                    <label for="carPlaceToggle">小车部署</label>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="carPlaceToggle">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <p class="hint-text" id="carPlaceHint">开启后点击地图添加小车（Ctrl+点击移除）</p>
             </div>
         </section>
 
@@ -152,19 +179,154 @@
     <!-- ========== 中间面板 ========== -->
     <main class="center-panel" id="centerPanel">
 
+        <!-- ====== 用户中心页 ====== -->
+        <div class="user-center" id="userCenterPanel" style="display:none;">
+            <div class="user-center-header">
+                <div class="user-avatar-large" id="ucAvatar">👤</div>
+                <div class="user-center-title">
+                    <h2 id="ucNickname">未登录</h2>
+                    <span class="user-center-id" id="ucUserId">ID: --</span>
+                </div>
+                <button class="user-logout-btn" id="ucLogoutBtn">退出登录</button>
+            </div>
+            <div class="user-center-body">
+                <div class="uc-section">
+                    <h3 class="uc-section-title">基本信息</h3>
+                    <div class="uc-info-grid">
+                        <div class="uc-info-item"><span class="uc-info-label">用户ID</span><span class="uc-info-value mono" id="ucInfoId">--</span></div>
+                        <div class="uc-info-item"><span class="uc-info-label">昵称</span><span class="uc-info-value" id="ucInfoNickname">--</span></div>
+                        <div class="uc-info-item"><span class="uc-info-label">注册时间</span><span class="uc-info-value" id="ucInfoCreated">--</span></div>
+                        <div class="uc-info-item"><span class="uc-info-label">最后登录</span><span class="uc-info-value" id="ucInfoLastLogin">--</span></div>
+                        <div class="uc-info-item"><span class="uc-info-label">参与会话</span><span class="uc-info-value mono" id="ucInfoSessions">0</span></div>
+                        <div class="uc-info-item"><span class="uc-info-label">回放次数</span><span class="uc-info-value mono" id="ucInfoReplays">0</span></div>
+                    </div>
+                </div>
+                <div class="uc-section">
+                    <h3 class="uc-section-title">偏好设置</h3>
+                    <div class="uc-prefs" id="ucPrefsContainer"><p class="uc-empty">暂无偏好设置</p></div>
+                    <div class="uc-add-pref">
+                        <input type="text" id="ucPrefKey" class="uc-pref-input" placeholder="键名（如 theme）" maxlength="30">
+                        <input type="text" id="ucPrefValue" class="uc-pref-input" placeholder="值（如 dark）" maxlength="100">
+                        <button class="uc-pref-save-btn" id="ucPrefSaveBtn">保存</button>
+                    </div>
+                </div>
+                <div class="uc-section">
+                    <h3 class="uc-section-title">参与会话</h3>
+                    <div class="uc-history" id="ucHistoryContainer"><p class="uc-empty">暂无会话记录</p></div>
+                </div>
+                <div class="uc-section">
+                    <h3 class="uc-section-title">修改密码</h3>
+                    <div class="uc-change-pwd">
+                        <input type="password" id="ucOldPwd" class="uc-pref-input" placeholder="当前密码">
+                        <input type="password" id="ucNewPwd" class="uc-pref-input" placeholder="新密码（6-20位）">
+                        <input type="password" id="ucNewPwd2" class="uc-pref-input" placeholder="确认新密码">
+                        <button class="uc-pref-save-btn" id="ucChangePwdBtn">修改密码</button>
+                    </div>
+                    <p style="font-size:10px;color:var(--text-muted);padding:0 14px 8px;" id="ucPwdMsg"></p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ====== 回放分析页 ====== -->
+        <div class="center-page" id="replayPanel" style="display:none;">
+            <div class="center-page-header">
+                <span class="center-page-icon">⏯</span>
+                <span>回放分析</span>
+            </div>
+            <div class="replay-toolbar">
+                <select id="replaySessionSelect" class="sim-select" style="flex:1;max-width:220px;">
+                    <option value="">-- 选择会话 --</option>
+                </select>
+                <button class="replay-ctrl-btn" id="replayBtnPrev" title="上一帧">⏮</button>
+                <button class="replay-ctrl-btn" id="replayBtnPlay" title="播放">▶</button>
+                <button class="replay-ctrl-btn" id="replayBtnPause" title="暂停" disabled>⏸</button>
+                <button class="replay-ctrl-btn" id="replayBtnStop" title="停止">⏹</button>
+                <button class="replay-ctrl-btn" id="replayBtnNext" title="下一帧">⏭</button>
+                <span style="color:var(--text-muted);font-size:10px;margin-left:6px;">速度</span>
+                <input type="range" id="replaySpeed" min="1" max="10" value="3" style="width:70px;">
+                <span class="mono" id="replaySpeedVal" style="font-size:10px;color:var(--accent-cyan);min-width:20px;">3x</span>
+                <span class="mono" id="replayFrameInfo" style="margin-left:auto;font-size:11px;color:var(--text-secondary);">0/0</span>
+            </div>
+            <div class="replay-canvas-wrap">
+                <canvas id="replayCanvas"></canvas>
+            </div>
+            <div class="replay-stats">
+                <span>覆盖率 <b class="mono" id="replayCoverage">0%</b></span>
+                <span>步数 <b class="mono" id="replaySteps">0</b></span>
+                <span>Tick <b class="mono" id="replayTick">0</b></span>
+                <span>会话ID <b class="mono" id="replaySessionId" style="font-size:9px;">--</b></span>
+            </div>
+        </div>
+
+        <!-- ====== 系统设置页 ====== -->
+        <div class="center-page" id="settingsPanel" style="display:none;">
+            <div class="center-page-header">
+                <span class="center-page-icon">⚙</span>
+                <span>系统设置</span>
+            </div>
+            <div class="settings-body">
+                <div class="settings-group">
+                    <h4>连接配置</h4>
+                    <div class="settings-row">
+                        <label>Redis 地址</label>
+                        <input type="text" id="setRedisHost" class="sim-input" value="localhost" style="width:140px;">
+                        <span>:</span>
+                        <input type="number" id="setRedisPort" class="sim-input" value="6379" style="width:70px;">
+                    </div>
+                    <div class="settings-row">
+                        <label>RabbitMQ</label>
+                        <input type="text" id="setMqHost" class="sim-input" value="localhost" style="width:140px;">
+                        <span>:</span>
+                        <input type="number" id="setMqPort" class="sim-input" value="5672" style="width:70px;">
+                    </div>
+                </div>
+                <div class="settings-group">
+                    <h4>默认仿真参数</h4>
+                    <div class="settings-row">
+                        <label>地图宽度</label>
+                        <input type="number" id="setMapWidth" class="sim-input" value="26" min="15" max="40" style="width:80px;">
+                        <label style="margin-left:12px;">高度</label>
+                        <input type="number" id="setMapHeight" class="sim-input" value="16" min="10" max="30" style="width:80px;">
+                    </div>
+                    <div class="settings-row">
+                        <label>机器人数</label>
+                        <input type="number" id="setRobotCount" class="sim-input" value="5" min="1" max="20" style="width:80px;">
+                        <label style="margin-left:12px;">障碍物密度</label>
+                        <input type="number" id="setDensity" class="sim-input" value="25" min="0" max="60" style="width:80px;"><span>%</span>
+                    </div>
+                </div>
+                <div class="settings-group">
+                    <h4>路径规划算法</h4>
+                    <div class="settings-row">
+                        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                            <input type="radio" name="algorithm" value="BFS" checked> BFS（广度优先）
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-left:16px;">
+                            <input type="radio" name="algorithm" value="A_STAR"> A*（A星）
+                        </label>
+                    </div>
+                </div>
+                <div class="settings-actions">
+                    <button class="btn-sim btn-start" id="settingsSaveBtn" style="width:auto;padding:0 30px;">💾 保存设置</button>
+                    <button class="btn-sim btn-reset" id="settingsResetBtn" style="width:auto;padding:0 30px;">↻ 恢复默认</button>
+                </div>
+            </div>
+        </div>
+
         <!-- 地图区域 -->
         <div class="map-area" id="mapArea">
+            <!-- 地图标题 + 图例（左上角横排） -->
+            <div id="mapInfoBar" class="map-info-bar">
+                <span class="map-title">实时地图</span>
+                <span class="map-divider"></span>
+                <span class="legend-swatch unexplored"></span><span>未探索</span>
+                <span class="legend-swatch explored"></span><span>已探索</span>
+                <span class="legend-swatch obstacle"></span><span>静态障碍</span>
+                <span class="legend-swatch dynamic"></span><span>动态障碍</span>
+                <span class="legend-swatch robot-dot"></span><span>机器人</span>
+            </div>
             <div id="canvasWrapper" class="canvas-wrapper">
                 <canvas id="mapCanvas"></canvas>
-            </div>
-            <!-- 图例 -->
-            <div id="mapLegend" class="map-legend">
-                <div class="legend-title">图例</div>
-                <div class="legend-item"><span class="legend-swatch unexplored"></span><span>未探索</span></div>
-                <div class="legend-item"><span class="legend-swatch explored"></span><span>已探索</span></div>
-                <div class="legend-item"><span class="legend-swatch obstacle"></span><span>静态障碍</span></div>
-                <div class="legend-item"><span class="legend-swatch dynamic"></span><span>动态障碍</span></div>
-                <div class="legend-item"><span class="legend-swatch robot-dot"></span><span>机器人</span></div>
             </div>
             <!-- 悬停提示 -->
             <div id="cellTooltip" class="cell-tooltip"></div>
@@ -328,8 +490,8 @@
 </footer>
 
 <!-- ==================== 脚本 ==================== -->
-<script src="canvas.js"></script>
-<script src="app.js"></script>
+<script src="canvas.js?v=2"></script>
+<script src="app.js?v=2"></script>
 
 </body>
 </html>
