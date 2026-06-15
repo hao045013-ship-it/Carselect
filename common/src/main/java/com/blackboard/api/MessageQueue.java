@@ -29,6 +29,7 @@ public interface MessageQueue {
     void replyRouteDone(String carId, int x, int y);
 
     // ==================== 广播 ====================
+    void broadcastEvent(String cmd, Map<String, Object> data);
     void broadcastRefreshAll(long tick);
 
     // ==================== 订阅 ====================

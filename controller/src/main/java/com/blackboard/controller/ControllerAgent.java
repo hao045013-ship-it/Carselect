@@ -207,6 +207,7 @@ public class ControllerAgent {
         );
 
         board.addLogEntry("INFO: Controller forward RESET to TaskConfigurator");
+        mq.broadcastEvent(MQKeys.CMD_RESET, Collections.emptyMap());
     }
 
     private void handleStart() {
@@ -219,6 +220,7 @@ public class ControllerAgent {
         board.setTaskConfig(config);
 
         board.addLogEntry("INFO: task started");
+        mq.broadcastEvent(MQKeys.CMD_START, Map.of("tick", board.getCurrentTick()));
         mq.broadcastRefreshAll(board.getCurrentTick());
     }
 
@@ -232,6 +234,7 @@ public class ControllerAgent {
         board.setTaskConfig(config);
 
         board.addLogEntry("INFO: task paused");
+        mq.broadcastEvent(MQKeys.CMD_PAUSE, Map.of("tick", board.getCurrentTick()));
         mq.broadcastRefreshAll(board.getCurrentTick());
     }
 
@@ -245,6 +248,7 @@ public class ControllerAgent {
         board.setTaskConfig(config);
 
         board.addLogEntry("INFO: task resumed");
+        mq.broadcastEvent(MQKeys.CMD_RESUME, Map.of("tick", board.getCurrentTick()));
         mq.broadcastRefreshAll(board.getCurrentTick());
     }
 
@@ -395,6 +399,8 @@ public class ControllerAgent {
             board.setStatus(carId, CarStatus.IDLE.name());
             board.addLogEntry("WARN: route not found: " + carId);
         }
+
+        mq.broadcastEvent(MQKeys.CMD_ROUTE_PLANNED, jsonObjectToMap(data));
     }
 
     private void handleMoved(JSONObject data) {
@@ -403,6 +409,7 @@ public class ControllerAgent {
         int y = data.getIntValue("y");
 
         board.addLogEntry("INFO: " + carId + " moved to (" + x + "," + y + ")");
+        mq.broadcastEvent(MQKeys.CMD_MOVED, jsonObjectToMap(data));
     }
 
     private void handleBlocked(JSONObject data) {
@@ -413,6 +420,7 @@ public class ControllerAgent {
 
         board.incrementBlockedCount(carId);
         board.addLogEntry("WARN: " + carId + " blocked");
+        mq.broadcastEvent(MQKeys.CMD_BLOCKED, jsonObjectToMap(data));
     }
 
     private void handleRouteDone(JSONObject data) {
@@ -426,6 +434,7 @@ public class ControllerAgent {
         board.setStatus(carId, CarStatus.IDLE.name());
 
         board.addLogEntry("INFO: route done: " + carId);
+        mq.broadcastEvent(MQKeys.CMD_ROUTE_DONE, jsonObjectToMap(data));
     }
 
     // =========================================================

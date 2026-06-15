@@ -206,10 +206,18 @@ public class MessageQueueImpl implements MessageQueue {
     // ==================== 广播 ====================
 
     @Override
+    public void broadcastEvent(String cmd, Map<String, Object> data) {
+        if (data == null) {
+            data = Collections.emptyMap();
+        }
+        publishToExchange(MQKeys.EXCHANGE_UPDATE_VIEW, buildMessage(cmd, data));
+    }
+
+    @Override
     public void broadcastRefreshAll(long tick) {
         Map<String, Object> data = new HashMap<>();
         data.put("tick", tick);
-        publishToExchange(MQKeys.EXCHANGE_UPDATE_VIEW, buildMessage(MQKeys.CMD_REFRESH_ALL, data));
+        broadcastEvent(MQKeys.CMD_REFRESH_ALL, data);
     }
 
     // ==================== 订阅 ====================
