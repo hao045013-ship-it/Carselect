@@ -38,7 +38,7 @@
       <module name="obstacle-manager" options="" />
       <module name="registry" options="" />
       <module name="replay-logger" options="-parameters" />
-      <module name="stats-reporter" options="" />
+      <module name="stats-reporter" options="-parameters" />
       <module name="target-planner" options="" />
       <module name="task-configurator" options="" />
     </option>
