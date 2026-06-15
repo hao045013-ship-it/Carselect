@@ -1161,14 +1161,15 @@ function showReplayPanel() {
 function refreshReplaySessions() {
     var sel = DOM.replaySessionSelect;
     sel.innerHTML = '<option value="">-- 选择会话 --</option>';
-    // 当前仿真会话（如果有 tick 数据）
-    if (state.tick > 0) {
-        sel.innerHTML += '<option value="current">当前会话 (Tick 0-' + state.tick + ')</option>';
-    }
-    // 从 coverageHistory 读取历史（实际应从 Redis 获取）
-    if (state.coverageHistory && state.coverageHistory.length > 0) {
-        sel.innerHTML += '<option value="last">上次会话 (' + state.coverageHistory.length + ' 个快照)</option>';
-    }
+    fetch('http://localhost:8084/api/replay/sessions?page=0&size=20')
+        .then(r => r.json())
+        .then(data => {
+            data.data.forEach(function(s) {
+                var label = new Date(s.startTime).toLocaleString()
+                    + ' | ' + (s.endTime ? '已结束' : '进行中');
+                sel.innerHTML += '<option value="' + s.sessionId + '">' + label + '</option>';
+            });
+        });
 }
 
 function initReplayCanvas() {
@@ -1201,23 +1202,19 @@ function initReplayEvents() {
 }
 
 function loadReplaySession(sessionId) {
-    if (!sessionId) { replaySnapshots = []; replayFrameIdx = 0; updateReplayFrame(); return; }
+    if (!sessionId) return;
     stopReplay();
-    var snaps = [];
-    var total = state.coverageHistory.length || state.tick;
-    if (total === 0) { addLog('warn', '暂无回放数据'); return; }
-    for (var i = 0; i < Math.min(total, 100); i++) {
-        snaps.push({
-            tick: i,
-            coverage: state.coverageHistory[i] ? parseFloat(state.coverageHistory[i].split(',')[1]) : state.exploredPercent * (i / total),
-            staticBlock: state.staticBlock,
-            cars: JSON.parse(JSON.stringify(state.cars))
+    fetch('http://localhost:8084/api/replay/sessions/' + sessionId + '/snapshots')
+        .then(r => r.json())
+        .then(data => {
+            replaySnapshots = data.snapshots.map(function(s) {
+                var st = JSON.parse(s.stateJson);
+                return { tick: s.tick, coverage: s.coverage * 100, ...st };
+            });
+            replayFrameIdx = 0;
+            updateReplayFrame();
+            addLog('success', '已加载 ' + replaySnapshots.length + ' 帧');
         });
-    }
-    replaySnapshots = snaps;
-    replayFrameIdx = 0;
-    updateReplayFrame();
-    addLog('success', '已加载 ' + snaps.length + ' 帧回放数据');
 }
 
 function startReplay() {
