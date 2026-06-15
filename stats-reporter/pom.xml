@@ -12,9 +12,6 @@
 
     <properties>
         <spring-boot.version>3.2.5</spring-boot.version>
-        <!-- Integration note: align with project JDK 17 for joint debugging. -->
-        <maven.compiler.source>17</maven.compiler.source>
-        <maven.compiler.target>17</maven.compiler.target>
         <maven.compiler.encoding>UTF-8</maven.compiler.encoding>
     </properties>
 
@@ -74,9 +71,6 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <configuration>
-                    <!-- Integration note: align with project JDK 17 for joint debugging. -->
-                    <source>17</source>
-                    <target>17</target>
                     <encoding>UTF-8</encoding>
                     <compilerArgs>
                         <arg>-parameters</arg>
