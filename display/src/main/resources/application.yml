@@ -1,0 +1,26 @@
+# ==================== SQL Server 数据库配置 ====================
+# UserManager 专用：用户数据持久化存储
+# 队友共享此数据库时需要统一连接信息
+
+datasource:
+  driver-class: com.microsoft.sqlserver.jdbc.SQLServerDriver
+  # 默认连接本机 SQL Server Express，端口 1433
+  # 如果队友的 SQL Server 在其他机器，修改 localhost 为对应 IP
+  url: jdbc:sqlserver://localhost:1433;databaseName=BlackboardSystem;encrypt=true;trustServerCertificate=true;characterEncoding=UTF-8
+  username: sa
+  password: 123456
+
+  # 连接池配置（HikariCP 可选，当前使用简单 JDBC 连接）
+  max-pool-size: 10
+  min-idle: 2
+  connection-timeout: 30000
+  idle-timeout: 600000
+  max-lifetime: 1800000
+
+# WebSocket 配置
+websocket:
+  port: 8887
+
+# 服务器配置
+server:
+  port: 8080
