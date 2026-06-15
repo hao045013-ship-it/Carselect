@@ -67,6 +67,17 @@ public class SimWebSocketServer extends WebSocketServer {
             String response = ObstacleManagerAgent.handleCommand(message);
             conn.send(response);
             System.out.println("[WebSocket] 障碍物命令已处理: " + cmd);
+            // 写 Redis 后只推送障碍物数据（不发全量状态，避免触发仿真启动）
+            try {
+                JSONObject obsUpdate = new JSONObject();
+                obsUpdate.put("type", "obstacle_update");
+                obsUpdate.put("staticBlock", SimpleBridge.readStaticBlock());
+                obsUpdate.put("dynamicBlock", SimpleBridge.readDynamicBlock());
+                broadcast(obsUpdate.toJSONString());
+                System.out.println("[WebSocket] 已广播障碍物刷新");
+            } catch (Exception e) {
+                System.err.println("[WebSocket] 障碍物广播失败: " + e.getMessage());
+            }
             return;
         }
 

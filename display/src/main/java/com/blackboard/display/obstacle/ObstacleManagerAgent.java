@@ -101,8 +101,9 @@ public class ObstacleManagerAgent {
         if (board == null) return error("黑板未初始化");
 
         board.clearStaticBlocks();
+        board.clearDynamicBlocks();
 
-        return ok("已清除全部障碍物", null);
+        return ok("已清除全部障碍物（含静态和动态）", null);
     }
 
     // ==================== 公开 API（供其他组件直接调用）====================

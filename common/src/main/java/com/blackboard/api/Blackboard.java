@@ -26,6 +26,7 @@ public interface Blackboard {
     void setDynamicBlock(int row, int col, boolean value);
     boolean hasDynamicBlock(int row, int col);
     boolean[] getFullDynamicBlock();
+    void clearDynamicBlocks();
 
     // ==================== 综合障碍判断 ====================
     boolean hasBlock(int row, int col);
