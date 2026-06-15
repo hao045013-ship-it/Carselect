@@ -10,17 +10,15 @@
 
 var WEBSOCKET_URL = 'ws://localhost:8887';
 var WS_RECONNECT_MAX = 5;
-var DEMO_TICK_MS = 100;
 var DEFAULT_MAP_WIDTH = 26;
 var DEFAULT_MAP_HEIGHT = 16;
-var DEFAULT_OBSTACLE_DENSITY = 25;
+var DEFAULT_OBSTACLE_DENSITY = 5;
 var LOG_MAX_ENTRIES = 200;
 var TREND_MAX_POINTS = 120; // 趋势图最多保留 120 个数据点
 
 var STATUS_IDLE = 'IDLE';
 var STATUS_RUNNING = 'RUNNING';
 var STATUS_PAUSED = 'PAUSED';
-var STATUS_FINISHED = 'FINISHED';
 
 // ==================== DOM 引用缓存 ====================
 
@@ -60,10 +58,6 @@ var _lastCarSnapshot = '';
 var _trendData = [];
 
 var layout = null;
-var isDemoMode = false;
-var demoInterval = null;
-var demoStartTime = null;
-var demoElapsedBeforePause = 0;
 var ws = null;
 var wsReconnectCount = 0;
 var wsReconnectTimer = null;
@@ -224,13 +218,6 @@ function initCanvasAndLayout() {
     layout = initCanvas(DOM.mapCanvas, DOM.canvasWrapper, state.mapWidth, state.mapHeight);
 }
 
-function recalcMapLayout() {
-    if (!DOM.canvasWrapper || !DOM.mapCanvas) return;
-    resizeCanvas(DOM.mapCanvas, DOM.canvasWrapper, state.mapWidth, state.mapHeight);
-    var rect = DOM.canvasWrapper.getBoundingClientRect();
-    layout = calcLayout(rect.width, rect.height, state.mapWidth, state.mapHeight);
-}
-
 // ==================== 趋势图画布 ====================
 
 function initTrendCanvas() {
@@ -369,16 +356,8 @@ function updateClock() {
 
 function normalizeState(raw) {
     if (!raw || typeof raw !== 'object') return;
-    var oldMapWidth = state.mapWidth;
-    var oldMapHeight = state.mapHeight;
     if (raw.mapWidth !== undefined) state.mapWidth = raw.mapWidth;
     if (raw.mapHeight !== undefined) state.mapHeight = raw.mapHeight;
-    if (raw.status) {
-        state.status = raw.status;
-        if (raw.status === STATUS_FINISHED || raw.status === STATUS_IDLE || raw.status === STATUS_PAUSED) {
-            state.startTimestamp = null;
-        }
-    }
     if (raw.tick !== undefined) state.tick = raw.tick;
     if (raw.exploredPercent !== undefined) state.exploredPercent = raw.exploredPercent;
     if (raw.mapView) state.mapView = raw.mapView;
@@ -413,10 +392,6 @@ function normalizeState(raw) {
     }
 
     // 记录趋势数据
-    if (state.mapWidth !== oldMapWidth || state.mapHeight !== oldMapHeight) {
-        recalcMapLayout();
-    }
-
     recordTrendPoint();
 
     stateDirty = true;
@@ -449,7 +424,6 @@ function tryConnectWebSocket() {
         wsConnected = true; wsReconnectCount = 0;
         updateConnectionUI(true);
         addLog('success', 'WebSocket 已连接到 ' + WEBSOCKET_URL);
-        if (isDemoMode) stopDemoMode();
     };
     ws.onmessage = function (event) {
         try {
@@ -478,13 +452,11 @@ function tryConnectWebSocket() {
     ws.onclose = function () { wsConnected = false; updateConnectionUI(false); addLog('warn', 'WebSocket 连接已断开'); scheduleReconnect(); };
     ws.onerror = function () { wsConnected = false; updateConnectionUI(false); };
 
-    setTimeout(function () {
-        if (!wsConnected) { addLog('warn', 'WebSocket 连接超时，切换到本地演示模式'); startDemoMode(); }
-    }, 2000);
+    // 不再自动启动演示模式，保持静默等待后端连接
 }
 
 function scheduleReconnect() {
-    if (wsReconnectCount >= WS_RECONNECT_MAX) { if (!isDemoMode) startDemoMode(); return; }
+    if (wsReconnectCount >= WS_RECONNECT_MAX) { addLog('warn', 'WebSocket 重连已达最大次数，请检查后端是否启动'); return; }
     var delay = Math.min(1000 * Math.pow(2, wsReconnectCount), 30000);
     wsReconnectCount++;
     addLog('info', '将在 ' + (delay/1000) + ' 秒后尝试重连 (' + wsReconnectCount + '/' + WS_RECONNECT_MAX + ')');
@@ -492,7 +464,7 @@ function scheduleReconnect() {
     wsReconnectTimer = setTimeout(tryConnectWebSocket, delay);
 }
 
-function onWsFail() { wsConnected = false; updateConnectionUI(false); addLog('warn', '无法创建 WebSocket 连接，切换到本地演示模式'); startDemoMode(); }
+function onWsFail() { wsConnected = false; updateConnectionUI(false); addLog('warn', '无法创建 WebSocket 连接，请检查后端是否启动'); }
 
 function updateConnectionUI(connected) {
     var el = DOM.connectionStatus; if (!el) return;
@@ -503,7 +475,7 @@ function updateConnectionUI(connected) {
 function sendCommand(cmd, data) {
     var payload = { command: cmd }; if (data) payload.data = data;
     if (ws && ws.readyState === WebSocket.OPEN) { ws.send(JSON.stringify(payload)); }
-    else if (!isDemoMode) { addLog('warn', 'WebSocket 未连接，无法发送命令: ' + cmd); }
+    else { addLog('warn', 'WebSocket 未连接，无法发送命令: ' + cmd); }
 }
 
 /** 处理后端返回的命令响应（用户操作等） */
@@ -580,6 +552,10 @@ function handleCommandResponse(raw) {
             DOM.ucPwdMsg.style.color = 'var(--accent-green)';
             addLog('success', data.message);
         }
+        // 障碍物/通用命令响应
+        else if (raw.message) {
+            addLog('success', raw.message);
+        }
         else {
             addLog('info', raw.data ? JSON.stringify(raw.data) : '操作完成');
         }
@@ -591,120 +567,6 @@ function handleCommandResponse(raw) {
         // 密码修改失败
         if (raw.error && (raw.error.indexOf('密码') >= 0 || raw.error.indexOf('登录') >= 0)) {
             if (DOM.ucPwdMsg) { DOM.ucPwdMsg.textContent = raw.error; DOM.ucPwdMsg.style.color = 'var(--accent-red)'; }
-        }
-    }
-}
-
-// ==================== 演示模式 ====================
-
-function startDemoMode() {
-    if (isDemoMode) return;
-    isDemoMode = true;
-    state.mapWidth = parseInt(DOM.mapWidth.value) || DEFAULT_MAP_WIDTH;
-    state.mapHeight = parseInt(DOM.mapHeight.value) || DEFAULT_MAP_HEIGHT;
-    state.status = STATUS_RUNNING;
-    state.tick = 0; state.elapsedMs = 0; state.exploredPercent = 0;
-    _trendData = [];
-
-    var totalCells = state.mapWidth * state.mapHeight;
-    var density = parseInt(DOM.obstacleDensity.value) || DEFAULT_OBSTACLE_DENSITY;
-    state.staticBlock = new Array(totalCells).fill(false);
-    var obsTarget = Math.floor(totalCells * density / 100);
-    var obsPlaced = 0;
-    while (obsPlaced < obsTarget) { var ri = Math.floor(Math.random() * totalCells); if (!state.staticBlock[ri]) { state.staticBlock[ri] = true; obsPlaced++; } }
-    state.obstacleCount = obsPlaced;
-    state.mapView = new Array(totalCells).fill(false);
-    state.dynamicBlock = new Array(totalCells).fill(false);
-
-    var robotCount = parseInt(DOM.robotCount.value) || 5;
-    state.cars = {};
-    clearRobotColorCache();
-    for (var r = 0; r < robotCount; r++) {
-        var carId = 'car' + (r + 1);
-        var px, py, attempts = 0;
-        do { px = Math.floor(Math.random() * state.mapWidth); py = Math.floor(Math.random() * state.mapHeight); attempts++; }
-        while (state.staticBlock[py * state.mapWidth + px] && attempts < 200);
-        state.cars[carId] = { carId: carId, position: { x: px, y: py }, target: null, routeList: [], status: 'MOVING', stepsWalked: 0, battery: 100 };
-        lightCell(px, py, 3);
-    }
-    state.connectedRobots = robotCount;
-    demoStartTime = Date.now(); demoElapsedBeforePause = 0;
-    _lastCarSnapshot = '';
-    _lastStepsSnapshot = '';
-
-    initCanvasAndLayout();
-    demoInterval = setInterval(demoTick, DEMO_TICK_MS);
-    addLog('success', '本地演示模式已启动（' + robotCount + ' 个机器人，密度 ' + density + '%）');
-    updateControlButtons();
-}
-
-function stopDemoMode() { if (demoInterval) { clearInterval(demoInterval); demoInterval = null; } isDemoMode = false; demoStartTime = null; }
-
-function demoTick() {
-    if (state.status !== STATUS_RUNNING) return;
-    state.tick++;
-    var speed = parseInt(DOM.speedSlider.value) || 5;
-    var movesPerTick = Math.max(1, Math.floor(speed / 3));
-    var carIds = Object.keys(state.cars);
-
-    carIds.forEach(function (carId) {
-        var car = state.cars[carId];
-        if (!car || car.status === 'BLOCKED' || car.status === 'OFFLINE') return;
-        for (var move = 0; move < movesPerTick; move++) {
-            if (!car.target || Math.random() < 0.02) assignDemoTarget(car);
-            if (!car.target) continue;
-            var dx = Math.sign(car.target.x - car.position.x);
-            var dy = Math.sign(car.target.y - car.position.y);
-            var moves = [];
-            if (dx !== 0) moves.push({ dx: dx, dy: 0 });
-            if (dy !== 0) moves.push({ dx: 0, dy: dy });
-            if (dx !== 0 && dy !== 0) moves.push({ dx: dx, dy: dy });
-            var moved = false;
-            for (var mi = 0; mi < moves.length; mi++) {
-                var nx = car.position.x + moves[mi].dx;
-                var ny = car.position.y + moves[mi].dy;
-                if (nx >= 0 && nx < state.mapWidth && ny >= 0 && ny < state.mapHeight) {
-                    var idx = ny * state.mapWidth + nx;
-                    if (!state.staticBlock[idx]) {
-                        car.position.x = nx; car.position.y = ny; car.stepsWalked++; car.status = 'MOVING';
-                        lightCell(nx, ny, 3); moved = true;
-                        if (nx === car.target.x && ny === car.target.y) { car.target = null; car.routeList = []; }
-                        break;
-                    }
-                }
-            }
-            if (!moved) {
-                car.status = 'BLOCKED'; car.target = null; car.routeList = [];
-                setTimeout((function (c) { return function () { if (c.status === 'BLOCKED') { c.status = 'MOVING'; assignDemoTarget(c); } }; })(car), 300);
-                break;
-            }
-        }
-        car.battery = Math.max(0, car.battery - 0.005 * movesPerTick);
-    });
-
-    var explored = 0;
-    for (var i = 0; i < state.mapView.length; i++) { if (state.mapView[i]) explored++; }
-    var totalCells = state.mapWidth * state.mapHeight;
-    state.exploredPercent = Math.round(explored / (totalCells - state.obstacleCount) * 1000) / 10;
-    state.elapsedMs = demoElapsedBeforePause + (Date.now() - demoStartTime);
-    recordTrendPoint();
-    stateDirty = true;
-}
-
-function assignDemoTarget(car) {
-    var tx, ty, attempts = 0;
-    do { tx = Math.floor(Math.random() * state.mapWidth); ty = Math.floor(Math.random() * state.mapHeight); attempts++; }
-    while (state.staticBlock[ty * state.mapWidth + tx] && attempts < 100);
-    car.target = { x: tx, y: ty }; car.status = 'MOVING';
-}
-
-function lightCell(cx, cy, radius) {
-    for (var dy = -radius; dy <= radius; dy++) {
-        for (var dx = -radius; dx <= radius; dx++) {
-            var nx = cx + dx, ny = cy + dy;
-            if (nx >= 0 && nx < state.mapWidth && ny >= 0 && ny < state.mapHeight && dx * dx + dy * dy <= radius * radius) {
-                state.mapView[ny * state.mapWidth + nx] = true;
-            }
         }
     }
 }
@@ -934,46 +796,28 @@ function wireEvents() {
 
     DOM.btnStart.addEventListener('click', function () {
         if (wsConnected) {
-            // 真实模式 → 发 START 命令到后端 SimulationController
-            var robotCount = parseInt(DOM.robotCount.value, 10);
-            var mapWidth = parseInt(DOM.mapWidth.value, 10);
-            var mapHeight = parseInt(DOM.mapHeight.value, 10);
-            var density = parseInt(DOM.obstacleDensity.value, 10);
             var params = {
-                robotCount: Number.isNaN(robotCount) ? 5 : robotCount,
-                carCount: Number.isNaN(robotCount) ? 5 : robotCount,
-                mapWidth: Number.isNaN(mapWidth) ? 26 : mapWidth,
-                mapHeight: Number.isNaN(mapHeight) ? 16 : mapHeight,
-                density: Number.isNaN(density) ? 25 : density,
-                obstacleDensity: Number.isNaN(density) ? 25 : density,
-                algorithm: document.querySelector('input[name="algorithm"]:checked')?.value || 'BFS'
+                robotCount: parseInt(DOM.robotCount.value) || 5,
+                mapWidth: parseInt(DOM.mapWidth.value) || 26,
+                mapHeight: parseInt(DOM.mapHeight.value) || 16,
+                density: parseInt(DOM.obstacleDensity.value) || 5
             };
             state.mapWidth = params.mapWidth;
             state.mapHeight = params.mapHeight;
-            recalcMapLayout();
             state.status = STATUS_RUNNING;
             state.startTimestamp = Date.now();
             state.elapsedMs = 0;
-            sendCommand('SET_CONFIG', params);
-            sendCommand('START');
+            sendCommand('START', params);
             addLog('success', '仿真已启动（' + params.robotCount + '辆, ' + params.mapWidth + '×' + params.mapHeight + '）');
-        } else if (isDemoMode) {
-            state.status = STATUS_RUNNING;
-            demoStartTime = Date.now();
-            addLog('success', '仿真已启动（演示模式）');
         } else {
-            startDemoMode();
+            addLog('warn', 'WebSocket 未连接，无法启动仿真');
         }
         updateControlButtons(); updateStatusBar(); updateSystemInfo();
     });
 
     DOM.btnPause.addEventListener('click', function () {
         state.status = STATUS_PAUSED;
-        if (isDemoMode) {
-            demoElapsedBeforePause = state.elapsedMs;
-            demoStartTime = null;
-            addLog('info', '仿真已暂停（演示模式）');
-        } else if (wsConnected) {
+        if (wsConnected) {
             sendCommand('PAUSE');
             addLog('info', '仿真已暂停');
         }
@@ -981,7 +825,6 @@ function wireEvents() {
     });
 
     DOM.btnReset.addEventListener('click', function () {
-        if (isDemoMode) stopDemoMode();
         if (wsConnected) sendCommand('RESET');
         state.tick = 0; state.elapsedMs = 0; state.exploredPercent = 0; state.status = STATUS_IDLE;
         state.startTimestamp = null; state.cars = {}; state.mapView = []; state.dynamicBlock = [];
@@ -991,18 +834,12 @@ function wireEvents() {
         if (DOM.mapImageInfo) DOM.mapImageInfo.style.display = 'none';
         if (DOM.imageFileName) DOM.imageFileName.textContent = '';
         if (DOM.mapImageInput) DOM.mapImageInput.value = '';
-        demoElapsedBeforePause = 0; demoStartTime = null;
-        if (isDemoMode) startDemoMode();
         updateControlButtons(); updateUI(); updateStatusBar(); updateSystemInfo();
         addLog('info', '仿真已重置');
     });
 
     DOM.speedSlider.addEventListener('input', function () {
         DOM.speedValue.textContent = this.value + 'x';
-        if (isDemoMode && demoInterval) {
-            clearInterval(demoInterval);
-            demoInterval = setInterval(demoTick, Math.max(30, DEMO_TICK_MS - (parseInt(this.value) - 1) * 15));
-        }
         if (wsConnected) {
             sendCommand('SET_SPEED', { speed: parseInt(this.value) });
         }
@@ -1010,27 +847,21 @@ function wireEvents() {
     DOM.obstacleDensity.addEventListener('input', function () { DOM.densityValue.textContent = this.value + '%'; });
 
     DOM.btnRandomObs.addEventListener('click', function () {
-        var density = parseInt(DOM.obstacleDensity.value, 10);
-        if (Number.isNaN(density)) density = 25;
-        if (isDemoMode) {
-            var tc = state.mapWidth * state.mapHeight; state.staticBlock = new Array(tc).fill(false);
-            var obsTarget = Math.floor(tc * density / 100), obsPlaced = 0;
-            while (obsPlaced < obsTarget) { var ri = Math.floor(Math.random() * tc); if (!state.staticBlock[ri]) { state.staticBlock[ri] = true; obsPlaced++; } }
-            state.obstacleCount = obsPlaced;
-            addLog('success', '已随机生成 ' + obsPlaced + ' 个障碍物（密度 ' + density + '%）'); stateDirty = true;
-        } else if (wsConnected) {
+        var density = parseInt(DOM.obstacleDensity.value) || 5;
+        if (wsConnected) {
             sendCommand('RANDOM_OBSTACLE', { density: density });
             addLog('info', '已发送随机障碍物命令（密度 ' + density + '%）');
+        } else {
+            addLog('warn', 'WebSocket 未连接，无法生成障碍物');
         }
         updateStatistics(); updateSystemInfo();
     });
     DOM.btnClearObs.addEventListener('click', function () {
-        if (isDemoMode) {
-            state.staticBlock = new Array(state.mapWidth * state.mapHeight).fill(false);
-            state.obstacleCount = 0; addLog('success', '已清除全部障碍物'); stateDirty = true;
-        } else if (wsConnected) {
+        if (wsConnected) {
             sendCommand('CLEAR_OBSTACLE');
             addLog('info', '已发送清除障碍物命令');
+        } else {
+            addLog('warn', 'WebSocket 未连接，无法清除障碍物');
         }
         updateStatistics(); updateSystemInfo();
     });
@@ -1123,13 +954,13 @@ function wireEvents() {
             if (e.shiftKey) {
                 state.dynamicBlock[idx] = !state.dynamicBlock[idx];
                 addLog('debug', (state.dynamicBlock[idx] ? '添加' : '移除') + ' 动态障碍物 (' + cell.col + ', ' + cell.row + ')');
-                if (wsConnected && !isDemoMode) sendCommand('SET_OBSTACLE', { row: cell.row, col: cell.col, value: state.dynamicBlock[idx] });
+                if (wsConnected) sendCommand('SET_OBSTACLE', { row: cell.row, col: cell.col, value: state.dynamicBlock[idx] });
             } else {
                 state.staticBlock[idx] = !state.staticBlock[idx];
                 state.obstacleCount += state.staticBlock[idx] ? 1 : -1;
                 state.obstacleCount = Math.max(0, state.obstacleCount);
                 addLog('debug', (state.staticBlock[idx] ? '添加' : '移除') + ' 障碍物 (' + cell.col + ', ' + cell.row + ')');
-                if (wsConnected && !isDemoMode) sendCommand('SET_OBSTACLE', { row: cell.row, col: cell.col, value: state.staticBlock[idx] });
+                if (wsConnected) sendCommand('SET_OBSTACLE', { row: cell.row, col: cell.col, value: state.staticBlock[idx] });
             }
             stateDirty = true;
             updateStatistics(); updateSystemInfo();
@@ -1372,7 +1203,6 @@ function initReplayEvents() {
 function loadReplaySession(sessionId) {
     if (!sessionId) { replaySnapshots = []; replayFrameIdx = 0; updateReplayFrame(); return; }
     stopReplay();
-    // 模拟加载快照（实际从 Redis / MQ 获取）
     var snaps = [];
     var total = state.coverageHistory.length || state.tick;
     if (total === 0) { addLog('warn', '暂无回放数据'); return; }
@@ -1470,7 +1300,7 @@ var defaultSettings = {
     redisHost: 'localhost', redisPort: 6379,
     mqHost: 'localhost', mqPort: 5672,
     mapWidth: 26, mapHeight: 16,
-    robotCount: 5, density: 25,
+    robotCount: 5, density: 5,
     algorithm: 'BFS'
 };
 
@@ -1507,7 +1337,7 @@ function saveSettings() {
         mapWidth: parseInt(document.getElementById('setMapWidth').value) || 26,
         mapHeight: parseInt(document.getElementById('setMapHeight').value) || 16,
         robotCount: parseInt(document.getElementById('setRobotCount').value) || 5,
-        density: parseInt(document.getElementById('setDensity').value) || 25,
+        density: parseInt(document.getElementById('setDensity').value) || 5,
         algorithm: document.querySelector('input[name="algorithm"]:checked')?.value || 'BFS'
     };
     localStorage.setItem('bbSimSettings', JSON.stringify(s));
@@ -1606,7 +1436,7 @@ function addCarAt(col, row) {
     addLog('success', '已部署小车 ' + carId + ' 位置 (' + col + ', ' + row + ')');
     // 同步到后端
     if (wsConnected) {
-        sendCommand('ADD_CAR', { carId: carId, row: row, col: col });
+        sendCommand('ADD_CAR', { carId: carId, x: col, y: row });
     }
 }
 
@@ -1637,8 +1467,7 @@ function startRenderLoop() {
     function loop() {
         animFrameId = requestAnimationFrame(loop);
         if (state.status === STATUS_RUNNING) {
-            if (isDemoMode && demoStartTime) state.elapsedMs = demoElapsedBeforePause + (Date.now() - demoStartTime);
-            else if (!isDemoMode && state.startTimestamp) state.elapsedMs = Date.now() - state.startTimestamp;
+            if (state.startTimestamp) state.elapsedMs = Date.now() - state.startTimestamp;
         }
         if (stateDirty) {
             var now = Date.now();
@@ -1672,5 +1501,3 @@ function escapeHtml(str) { var d = document.createElement('div'); d.appendChild(
 
 window._simState = state;
 window._simAddLog = addLog;
-window._simStartDemo = startDemoMode;
-window._simStopDemo = stopDemoMode;

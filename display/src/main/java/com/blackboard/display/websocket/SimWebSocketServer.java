@@ -2,6 +2,7 @@ package com.blackboard.display.websocket;
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
+import com.blackboard.display.obstacle.ObstacleManagerAgent;
 import com.blackboard.display.user.UserManagerAgent;
 import com.blackboard.util.SimpleBridge;
 import org.java_websocket.WebSocket;
@@ -9,27 +10,20 @@ import org.java_websocket.handshake.ClientHandshake;
 import org.java_websocket.server.WebSocketServer;
 
 import java.net.InetSocketAddress;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.Set;
 
 /**
- * WebSocket server for the display module.
- * Frontend commands are routed to Controller through MQ via SimpleBridge.
+ * WebSocket 服务器 —— 前端与后端唯一的通信通道
+ * <p>
+ * 命令路由（人4 职责）：
+ * <ul>
+ *   <li>用户命令（LOGIN/SAVE_PREF 等）→ UserManagerAgent 直接处理</li>
+ *   <li>仿真命令（START/PAUSE 等）→ 转发到 MQ ControllerCmd（人1 的 Controller 消费）</li>
+ *   <li>障碍物命令（SET_OBSTACLE 等）→ 写 Redis 黑板</li>
+ * </ul>
+ * </p>
  */
 public class SimWebSocketServer extends WebSocketServer {
-
-    private static final Set<String> USER_COMMANDS = Set.of(
-            "LOGIN", "LOGOUT", "GET_PROFILE", "UPDATE_NICKNAME",
-            "SAVE_PREF", "GET_PREFS", "ADD_HISTORY", "GET_HISTORY",
-            "CHANGE_PASSWORD"
-    );
-
-    private static final Set<String> BACKEND_COMMANDS = Set.of(
-            "SET_CONFIG", "START", "PAUSE", "RESUME", "RESET", "SET_SPEED",
-            "ADD_CAR", "REMOVE_CAR",
-            "SET_OBSTACLE", "RANDOM_OBSTACLE", "CLEAR_OBSTACLE"
-    );
 
     public SimWebSocketServer(int port) {
         super(new InetSocketAddress(port));
@@ -37,144 +31,112 @@ public class SimWebSocketServer extends WebSocketServer {
 
     @Override
     public void onOpen(WebSocket conn, ClientHandshake handshake) {
-        System.out.println("[WebSocket] client connected: " + conn.getRemoteSocketAddress());
-        try {
-            conn.send(SimpleBridge.readFullState());
-        } catch (Exception e) {
-            System.err.println("[WebSocket] failed to push initial state: " + e.getMessage());
-        }
+        System.out.println("[WebSocket] 客户端连接：" + conn.getRemoteSocketAddress());
     }
 
     @Override
     public void onClose(WebSocket conn, int code, String reason, boolean remote) {
-        System.out.println("[WebSocket] client disconnected");
+        System.out.println("[WebSocket] 客户端断开");
     }
 
     @Override
     public void onMessage(WebSocket conn, String message) {
-        System.out.println("[WebSocket] received: " + (message.length() > 80 ? message.substring(0, 80) + "..." : message));
+        System.out.println("[WebSocket] 收到: " + (message.length() > 80 ? message.substring(0, 80) + "..." : message));
 
         JSONObject req;
         try {
             req = JSON.parseObject(message);
         } catch (Exception e) {
-            conn.send(error("Invalid JSON"));
+            System.out.println("[WebSocket] JSON 解析失败");
             return;
         }
 
         String cmd = req.getString("command");
-        if (cmd == null || cmd.isBlank()) {
-            cmd = req.getString("cmd");
-        }
         JSONObject data = req.getJSONObject("data");
-        if (cmd == null || cmd.isBlank()) {
-            conn.send(error("Missing command"));
+        if (cmd == null) return;
+
+        // ====== 用户命令 → UserManagerAgent ======
+        if (isUserCommand(cmd)) {
+            String response = UserManagerAgent.handleCommand(message);
+            conn.send(response);
             return;
         }
 
-        String normalized = cmd.toUpperCase();
-
-        if (USER_COMMANDS.contains(normalized)) {
-            conn.send(UserManagerAgent.handleCommand(message));
-            return;
-        }
-
-        if (BACKEND_COMMANDS.contains(normalized)) {
+        // ====== 障碍物命令 → ObstacleManagerAgent（直接写 Redis）======
+        if (isObstacleCommand(cmd)) {
+            String response = ObstacleManagerAgent.handleCommand(message);
+            conn.send(response);
+            System.out.println("[WebSocket] 障碍物命令已处理: " + cmd);
+            // 写 Redis 后只推送障碍物数据（不发全量状态，避免触发仿真启动）
             try {
-                forwardBackendCommand(normalized, data);
-                conn.send(ok("Command forwarded: " + normalized));
-                System.out.println("[WebSocket] forwarded to backend: " + normalized);
+                JSONObject obsUpdate = new JSONObject();
+                obsUpdate.put("type", "obstacle_update");
+                obsUpdate.put("staticBlock", SimpleBridge.readStaticBlock());
+                obsUpdate.put("dynamicBlock", SimpleBridge.readDynamicBlock());
+                broadcast(obsUpdate.toJSONString());
+                System.out.println("[WebSocket] 已广播障碍物刷新");
             } catch (Exception e) {
-                conn.send(error("Command forwarding failed: " + e.getMessage()));
-                System.err.println("[WebSocket] command forwarding failed: " + e.getMessage());
+                System.err.println("[WebSocket] 障碍物广播失败: " + e.getMessage());
             }
             return;
         }
 
-        conn.send(error("Unknown command: " + cmd));
-        System.out.println("[WebSocket] unknown command: " + cmd);
+        // ====== 仿真命令 → 转发到 MQ (人1 Controller 消费) ======
+        if (isSimCommand(cmd)) {
+            try {
+                if ("ADD_CAR".equalsIgnoreCase(cmd) && data != null) {
+                    String carId = data.getString("carId");
+                    int x = data.getIntValue("x", 0);
+                    int y = data.getIntValue("y", 0);
+                    SimpleBridge.addCar(carId, x, y);
+                } else if ("REMOVE_CAR".equalsIgnoreCase(cmd) && data != null) {
+                    // 通过 MQ 转发移除命令
+                    SimpleBridge.sendCommand(cmd);
+                } else {
+                    SimpleBridge.sendCommand(cmd);
+                }
+                System.out.println("[WebSocket] 已转发命令到 MQ: " + cmd);
+            } catch (Exception e) {
+                System.err.println("[WebSocket] 命令转发失败: " + e.getMessage());
+            }
+            return;
+        }
+
+        System.out.println("[WebSocket] 未识别命令: " + cmd);
     }
 
     @Override
     public void onError(WebSocket conn, Exception ex) {
-        System.err.println("[WebSocket] error: " + ex.getMessage());
+        System.err.println("[WebSocket] 错误: " + ex.getMessage());
     }
 
     @Override
     public void onStart() {
-        System.out.println("[WebSocket] server started on port: " + getPort());
+        System.out.println("[WebSocket] 服务器启动成功，端口: " + getPort());
     }
 
-    private void forwardBackendCommand(String cmd, JSONObject data) {
-        switch (cmd) {
-            case "SET_CONFIG" -> SimpleBridge.setConfig(toConfigMap(data));
-            case "START" -> {
-                if (data != null && !data.isEmpty()) {
-                    SimpleBridge.setConfig(toConfigMap(data));
-                }
-                SimpleBridge.sendCommand("START");
-            }
-            case "ADD_CAR" -> {
-                if (data == null) {
-                    throw new IllegalArgumentException("ADD_CAR missing data");
-                }
-                String carId = data.getString("carId");
-                int row = data.containsKey("row") ? data.getIntValue("row") : data.getIntValue("y");
-                int col = data.containsKey("col") ? data.getIntValue("col") : data.getIntValue("x");
-                SimpleBridge.addCar(carId, row, col);
-            }
-            case "SET_OBSTACLE" -> {
-                if (data == null) {
-                    throw new IllegalArgumentException("SET_OBSTACLE missing data");
-                }
-                int row = data.getIntValue("row");
-                int col = data.getIntValue("col");
-                boolean value = !data.containsKey("value") || data.getBooleanValue("value");
-                SimpleBridge.setObstacle(row, col, value);
-            }
-            case "RANDOM_OBSTACLE" -> SimpleBridge.randomObstacles(data == null ? 25 : data.getIntValue("density", 25));
-            case "CLEAR_OBSTACLE" -> SimpleBridge.clearAllObstacles();
-            default -> SimpleBridge.sendCommand(cmd, toMap(data));
-        }
-    }
+    // ==================== 命令分类 ====================
 
-    private Map<String, Object> toConfigMap(JSONObject data) {
-        Map<String, Object> map = toMap(data);
-        if (map.containsKey("robotCount") && !map.containsKey("carCount")) {
-            map.put("carCount", map.get("robotCount"));
-        }
-        if (map.containsKey("density") && !map.containsKey("obstacleDensity")) {
-            map.put("obstacleDensity", map.get("density"));
-        }
-        map.putIfAbsent("algorithm", "BFS");
-        return map;
-    }
+    private static final Set<String> USER_COMMANDS = Set.of(
+            "LOGIN", "LOGOUT", "GET_PROFILE", "UPDATE_NICKNAME",
+            "SAVE_PREF", "GET_PREFS", "ADD_HISTORY", "GET_HISTORY",
+            "CHANGE_PASSWORD"
+    );
 
-    private Map<String, Object> toMap(JSONObject data) {
-        Map<String, Object> map = new HashMap<>();
-        if (data == null) {
-            return map;
-        }
-        for (String key : data.keySet()) {
-            map.put(key, data.get(key));
-        }
-        return map;
-    }
+    private static final Set<String> OBSTACLE_COMMANDS = Set.of(
+            "SET_OBSTACLE", "RANDOM_OBSTACLE", "CLEAR_OBSTACLE"
+    );
 
-    private String ok(String message) {
-        JSONObject resp = new JSONObject();
-        resp.put("success", true);
-        resp.put("message", message);
-        return resp.toJSONString();
-    }
+    private static final Set<String> SIM_COMMANDS = Set.of(
+            "START", "PAUSE", "RESUME", "RESET", "SET_SPEED",
+            "ADD_CAR", "REMOVE_CAR"
+    );
 
-    private String error(String message) {
-        JSONObject resp = new JSONObject();
-        resp.put("success", false);
-        resp.put("error", message);
-        return resp.toJSONString();
-    }
+    private boolean isUserCommand(String cmd)     { return USER_COMMANDS.contains(cmd.toUpperCase()); }
+    private boolean isObstacleCommand(String cmd) { return OBSTACLE_COMMANDS.contains(cmd.toUpperCase()); }
+    private boolean isSimCommand(String cmd)      { return SIM_COMMANDS.contains(cmd.toUpperCase()); }
 
+    /** 向所有已连接客户端广播消息 */
     public void broadcast(String message) {
         for (WebSocket conn : getConnections()) {
             conn.send(message);

@@ -195,6 +195,22 @@ public class SimpleBridge {
     }
 
     /**
+     * 读取静态障碍物数组（仅障碍物，不触发仿真）
+     */
+    public static boolean[] readStaticBlock() {
+        checkInit();
+        return board.getFullStaticBlock();
+    }
+
+    /**
+     * 读取动态障碍物数组（仅障碍物，不触发仿真）
+     */
+    public static boolean[] readDynamicBlock() {
+        checkInit();
+        return board.getFullDynamicBlock();
+    }
+
+    /**
      * 用户登录（输入昵称，自动分配ID）
      */
     public static String login(String nickname) {

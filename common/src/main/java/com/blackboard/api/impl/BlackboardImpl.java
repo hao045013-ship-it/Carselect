@@ -171,6 +171,17 @@ public class BlackboardImpl implements Blackboard {
     }
 
     @Override
+    public void clearDynamicBlocks() {
+        try (Jedis jedis = getJedis()) {
+            int width = getWidth(jedis);
+            int height = getHeight(jedis);
+            for (int i = 0; i < width * height; i++) {
+                jedis.setbit(RedisKeys.DYNAMIC_BLOCK, i, false);
+            }
+        }
+    }
+
+    @Override
     public boolean[] getFullDynamicBlock() {
         try (Jedis jedis = getJedis()) {
             int width = getWidth(jedis);
