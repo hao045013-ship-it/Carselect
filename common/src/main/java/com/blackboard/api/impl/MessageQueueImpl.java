@@ -162,7 +162,18 @@ public class MessageQueueImpl implements MessageQueue {
     @Override
     public void replyTargetAssigned(String jsonArray) {
         // jsonArray 是已经序列化好的 JSON 数组字符串，直接作为 data
-        publish(MQKeys.CONTROLLER_CMD, buildMessage(MQKeys.CMD_TARGET_ASSIGNED, jsonArray));
+        Object data = jsonArray;
+        if (jsonArray != null) {
+            String trimmed = jsonArray.trim();
+            if (trimmed.startsWith("[")) {
+                Map<String, Object> wrapped = new HashMap<>();
+                wrapped.put("assignedCars", JSON.parseArray(trimmed));
+                data = wrapped;
+            } else if (trimmed.startsWith("{")) {
+                data = JSON.parseObject(trimmed);
+            }
+        }
+        publish(MQKeys.CONTROLLER_CMD, buildMessage(MQKeys.CMD_TARGET_ASSIGNED, data));
     }
 
     @Override
@@ -206,10 +217,18 @@ public class MessageQueueImpl implements MessageQueue {
     // ==================== 广播 ====================
 
     @Override
+    public void broadcastEvent(String cmd, Map<String, Object> data) {
+        if (data == null) {
+            data = Collections.emptyMap();
+        }
+        publishToExchange(MQKeys.EXCHANGE_UPDATE_VIEW, buildMessage(cmd, data));
+    }
+
+    @Override
     public void broadcastRefreshAll(long tick) {
         Map<String, Object> data = new HashMap<>();
         data.put("tick", tick);
-        publishToExchange(MQKeys.EXCHANGE_UPDATE_VIEW, buildMessage(MQKeys.CMD_REFRESH_ALL, data));
+        broadcastEvent(MQKeys.CMD_REFRESH_ALL, data);
     }
 
     // ==================== 订阅 ====================

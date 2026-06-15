@@ -4,6 +4,8 @@ import java.util.Objects;
 
 import com.alibaba.fastjson2.JSON;
 
+import java.util.Objects;
+
 /**
  * 二维坐标点 —— 所有组件共用
  */

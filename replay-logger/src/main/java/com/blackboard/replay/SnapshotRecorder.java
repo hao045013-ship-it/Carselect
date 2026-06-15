@@ -134,6 +134,10 @@ public class SnapshotRecorder {
         state.setDynamicBlock(board.getFullDynamicBlock());
         state.setExploredPercent(board.getExploredPercent());
         state.setTick(board.getCurrentTick());
+        Map<String, String> config = board.getTaskConfig();
+        if (config != null) {
+            state.setStatus(config.get("taskStatus"));
+        }
         state.setStatsReport(board.getStatsReport());
         state.setCoverageHistory(board.getCoverageHistory());
         state.setCars(buildCarInfoMap());
