@@ -13,6 +13,7 @@
         <dependency><groupId>com.blackboard</groupId><artifactId>controller</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>com.blackboard</groupId><artifactId>car</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>com.blackboard</groupId><artifactId>task-configurator</artifactId><version>${project.version}</version></dependency>
+        <dependency><groupId>com.blackboard</groupId><artifactId>obstacle-manager</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>com.blackboard</groupId><artifactId>exploration-logger</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>com.blackboard</groupId><artifactId>registry</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>com.blackboard</groupId><artifactId>navigator</artifactId><version>${project.version}</version></dependency>
@@ -20,5 +21,11 @@
         <dependency><groupId>com.blackboard</groupId><artifactId>stats-reporter</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>com.blackboard</groupId><artifactId>replay-logger</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>com.blackboard</groupId><artifactId>display</artifactId><version>${project.version}</version></dependency>
+        <dependency>
+            <groupId>com.blackboard</groupId>
+            <artifactId>obstacle-manager</artifactId>
+            <version>1.0-SNAPSHOT</version>
+            <scope>compile</scope>
+        </dependency>
     </dependencies>
 </project>

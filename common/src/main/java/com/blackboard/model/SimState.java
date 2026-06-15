@@ -15,6 +15,7 @@ public class SimState {
     private boolean[] dynamicBlock;
     private double exploredPercent;
     private long tick;
+    private String status;
     private Map<String, CarInfo> cars;
     private String statsReport;
     private List<String> coverageHistory;
@@ -48,6 +49,8 @@ public class SimState {
     public void setExploredPercent(double exploredPercent) { this.exploredPercent = exploredPercent; }
     public long getTick() { return tick; }
     public void setTick(long tick) { this.tick = tick; }
+    public String getStatus() { return status; }
+    public void setStatus(String status) { this.status = status; }
     public Map<String, CarInfo> getCars() { return cars; }
     public void setCars(Map<String, CarInfo> cars) { this.cars = cars; }
 

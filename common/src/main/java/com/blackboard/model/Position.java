@@ -2,6 +2,8 @@ package com.blackboard.model;
 
 import com.alibaba.fastjson2.JSON;
 
+import java.util.Objects;
+
 /**
  * 二维坐标点 —— 所有组件共用
  */
@@ -36,4 +38,17 @@ public class Position {
     public String toString() {
         return "(" + x + "," + y + ")";
     }
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof Position)) return false;
+        Position position = (Position) o;
+        return x == position.x && y == position.y;
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(x, y);
+    }
+
 }

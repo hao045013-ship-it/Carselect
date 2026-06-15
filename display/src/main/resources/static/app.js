@@ -20,6 +20,7 @@ var TREND_MAX_POINTS = 120; // 趋势图最多保留 120 个数据点
 var STATUS_IDLE = 'IDLE';
 var STATUS_RUNNING = 'RUNNING';
 var STATUS_PAUSED = 'PAUSED';
+var STATUS_FINISHED = 'FINISHED';
 
 // ==================== DOM 引用缓存 ====================
 
@@ -223,6 +224,13 @@ function initCanvasAndLayout() {
     layout = initCanvas(DOM.mapCanvas, DOM.canvasWrapper, state.mapWidth, state.mapHeight);
 }
 
+function recalcMapLayout() {
+    if (!DOM.canvasWrapper || !DOM.mapCanvas) return;
+    resizeCanvas(DOM.mapCanvas, DOM.canvasWrapper, state.mapWidth, state.mapHeight);
+    var rect = DOM.canvasWrapper.getBoundingClientRect();
+    layout = calcLayout(rect.width, rect.height, state.mapWidth, state.mapHeight);
+}
+
 // ==================== 趋势图画布 ====================
 
 function initTrendCanvas() {
@@ -361,8 +369,16 @@ function updateClock() {
 
 function normalizeState(raw) {
     if (!raw || typeof raw !== 'object') return;
+    var oldMapWidth = state.mapWidth;
+    var oldMapHeight = state.mapHeight;
     if (raw.mapWidth !== undefined) state.mapWidth = raw.mapWidth;
     if (raw.mapHeight !== undefined) state.mapHeight = raw.mapHeight;
+    if (raw.status) {
+        state.status = raw.status;
+        if (raw.status === STATUS_FINISHED || raw.status === STATUS_IDLE || raw.status === STATUS_PAUSED) {
+            state.startTimestamp = null;
+        }
+    }
     if (raw.tick !== undefined) state.tick = raw.tick;
     if (raw.exploredPercent !== undefined) state.exploredPercent = raw.exploredPercent;
     if (raw.mapView) state.mapView = raw.mapView;
@@ -397,6 +413,10 @@ function normalizeState(raw) {
     }
 
     // 记录趋势数据
+    if (state.mapWidth !== oldMapWidth || state.mapHeight !== oldMapHeight) {
+        recalcMapLayout();
+    }
+
     recordTrendPoint();
 
     stateDirty = true;
@@ -915,18 +935,27 @@ function wireEvents() {
     DOM.btnStart.addEventListener('click', function () {
         if (wsConnected) {
             // 真实模式 → 发 START 命令到后端 SimulationController
+            var robotCount = parseInt(DOM.robotCount.value, 10);
+            var mapWidth = parseInt(DOM.mapWidth.value, 10);
+            var mapHeight = parseInt(DOM.mapHeight.value, 10);
+            var density = parseInt(DOM.obstacleDensity.value, 10);
             var params = {
-                robotCount: parseInt(DOM.robotCount.value) || 5,
-                mapWidth: parseInt(DOM.mapWidth.value) || 26,
-                mapHeight: parseInt(DOM.mapHeight.value) || 16,
-                density: parseInt(DOM.obstacleDensity.value) || 25
+                robotCount: Number.isNaN(robotCount) ? 5 : robotCount,
+                carCount: Number.isNaN(robotCount) ? 5 : robotCount,
+                mapWidth: Number.isNaN(mapWidth) ? 26 : mapWidth,
+                mapHeight: Number.isNaN(mapHeight) ? 16 : mapHeight,
+                density: Number.isNaN(density) ? 25 : density,
+                obstacleDensity: Number.isNaN(density) ? 25 : density,
+                algorithm: document.querySelector('input[name="algorithm"]:checked')?.value || 'BFS'
             };
             state.mapWidth = params.mapWidth;
             state.mapHeight = params.mapHeight;
+            recalcMapLayout();
             state.status = STATUS_RUNNING;
             state.startTimestamp = Date.now();
             state.elapsedMs = 0;
-            sendCommand('START', params);
+            sendCommand('SET_CONFIG', params);
+            sendCommand('START');
             addLog('success', '仿真已启动（' + params.robotCount + '辆, ' + params.mapWidth + '×' + params.mapHeight + '）');
         } else if (isDemoMode) {
             state.status = STATUS_RUNNING;
@@ -981,7 +1010,8 @@ function wireEvents() {
     DOM.obstacleDensity.addEventListener('input', function () { DOM.densityValue.textContent = this.value + '%'; });
 
     DOM.btnRandomObs.addEventListener('click', function () {
-        var density = parseInt(DOM.obstacleDensity.value) || 25;
+        var density = parseInt(DOM.obstacleDensity.value, 10);
+        if (Number.isNaN(density)) density = 25;
         if (isDemoMode) {
             var tc = state.mapWidth * state.mapHeight; state.staticBlock = new Array(tc).fill(false);
             var obsTarget = Math.floor(tc * density / 100), obsPlaced = 0;
@@ -1576,7 +1606,7 @@ function addCarAt(col, row) {
     addLog('success', '已部署小车 ' + carId + ' 位置 (' + col + ', ' + row + ')');
     // 同步到后端
     if (wsConnected) {
-        sendCommand('ADD_CAR', { carId: carId, x: col, y: row });
+        sendCommand('ADD_CAR', { carId: carId, row: row, col: col });
     }
 }
 

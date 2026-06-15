@@ -20,7 +20,7 @@ public class PredictionEngine {
     public void addPoint(long tick, int exploredCells) {
         coveragePoints.add(new long[]{tick, exploredCells});
         while (coveragePoints.size() > MAX_POINTS) {
-            coveragePoints.removeFirst();
+            coveragePoints.remove(0);
         }
     }
 
@@ -81,7 +81,7 @@ public class PredictionEngine {
             return result;
         }
 
-        long[] latest = points.getLast();
+        long[] latest = points.get(points.size() - 1);
         long latestTick = latest[0];
         int latestExploredCells = (int) latest[1];
 

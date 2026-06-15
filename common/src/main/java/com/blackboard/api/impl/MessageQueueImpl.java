@@ -162,7 +162,18 @@ public class MessageQueueImpl implements MessageQueue {
     @Override
     public void replyTargetAssigned(String jsonArray) {
         // jsonArray 是已经序列化好的 JSON 数组字符串，直接作为 data
-        publish(MQKeys.CONTROLLER_CMD, buildMessage(MQKeys.CMD_TARGET_ASSIGNED, jsonArray));
+        Object data = jsonArray;
+        if (jsonArray != null) {
+            String trimmed = jsonArray.trim();
+            if (trimmed.startsWith("[")) {
+                Map<String, Object> wrapped = new HashMap<>();
+                wrapped.put("assignedCars", JSON.parseArray(trimmed));
+                data = wrapped;
+            } else if (trimmed.startsWith("{")) {
+                data = JSON.parseObject(trimmed);
+            }
+        }
+        publish(MQKeys.CONTROLLER_CMD, buildMessage(MQKeys.CMD_TARGET_ASSIGNED, data));
     }
 
     @Override

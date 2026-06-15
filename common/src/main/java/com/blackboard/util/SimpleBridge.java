@@ -58,6 +58,10 @@ public class SimpleBridge {
         state.setExploredPercent(board.getExploredPercent());
         // tick 暂时无法从黑板获取，可后续扩展 Blackboard.getCurrentTick()
         state.setTick(board.getCurrentTick());
+        Map<String, String> config = board.getTaskConfig();
+        if (config != null) {
+            state.setStatus(config.get("taskStatus"));
+        }
 
         // 障碍物和视野（boolean[] 直接放入，fastjson2 会自动序列化为数组）
         state.setStaticBlock(board.getFullStaticBlock());
@@ -163,6 +167,11 @@ public class SimpleBridge {
     public static void sendCommand(String command) {
         checkInit();
         mq.sendCommand(command, Collections.emptyMap());
+    }
+
+    public static void sendCommand(String command, Map<String, Object> data) {
+        checkInit();
+        mq.sendCommand(command, data == null ? Collections.emptyMap() : data);
     }
 
     /**
