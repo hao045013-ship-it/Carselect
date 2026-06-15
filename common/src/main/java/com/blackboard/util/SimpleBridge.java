@@ -236,9 +236,9 @@ public class SimpleBridge {
     /**
      * 添加车
      */
-    public static void addCar(String carId, int startX, int startY) {
+    public static void addCar(String carId, int row, int col) {
         checkInit();
-        mq.addCar(carId, startX, startY);
+        mq.addCar(carId, row, col);
     }
     /**
      *上传地图

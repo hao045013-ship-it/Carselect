@@ -82,8 +82,10 @@ public class TaskConfiguratorAgent {
             JSONObject car = cars.getJSONObject(i);
 
             String carId = car.getString("carId");
-            int x = car.getIntValue("x");
-            int y = car.getIntValue("y");
+            int row = car.containsKey("row") ? car.getIntValue("row") : car.getIntValue("y");
+            int col = car.containsKey("col") ? car.getIntValue("col") : car.getIntValue("x");
+            int x = col;
+            int y = row;
 
             initOneCar(carId, x, y);
         }

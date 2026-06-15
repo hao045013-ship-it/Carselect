@@ -270,8 +270,10 @@ public class ControllerAgent {
 
     private void handleAddCar(JSONObject data) {
         String carId = data.getString("carId");
-        int x = data.getIntValue("x");
-        int y = data.getIntValue("y");
+        int row = data.containsKey("row") ? data.getIntValue("row") : data.getIntValue("y");
+        int col = data.containsKey("col") ? data.getIntValue("col") : data.getIntValue("x");
+        int x = col;
+        int y = row;
 
         if (carId == null || carId.isBlank()) {
             board.addLogEntry("WARN: ADD_CAR failed, carId empty");
@@ -288,7 +290,7 @@ public class ControllerAgent {
             return;
         }
 
-        if (board.hasBlock(x, y)) {
+        if (board.hasBlock(y, x)) {
             board.addLogEntry("WARN: ADD_CAR failed, blocked position: " + carId);
             return;
         }
@@ -296,9 +298,9 @@ public class ControllerAgent {
         mq.declareCarQueue(carId);
 
         board.addCar(carId);
-        board.setPosition(carId, x, y);
+        board.setPosition(carId, y, x);
         board.setStatus(carId, CarStatus.IDLE.name());
-        board.setDynamicBlock(x, y, true);
+        board.setDynamicBlock(y, x, true);
         board.appendTrace(carId, board.getCurrentTick(), x, y);
 
         illuminateInitialArea(x, y);
@@ -321,7 +323,7 @@ public class ControllerAgent {
                 int ny = y + dy;
 
                 if (isInMap(nx, ny)) {
-                    board.exploreCell(nx, ny);
+                    board.exploreCell(ny, nx);
                 }
             }
         }
