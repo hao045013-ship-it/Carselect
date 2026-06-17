@@ -147,6 +147,22 @@ function cacheDomReferences() {
     DOM.replayTick = document.getElementById('replayTick');
     DOM.replaySessionId = document.getElementById('replaySessionId');
 
+    // 统计分析
+    DOM.statsPanel = document.getElementById('statsPanel');
+    DOM.statsSessionSelect = document.getElementById('statsSessionSelect');
+    DOM.statsOverviewCards = document.getElementById('statsOverviewCards');
+    DOM.statsCoverage = document.getElementById('statsCoverage');
+    DOM.statsTotalMoves = document.getElementById('statsTotalMoves');
+    DOM.statsTotalBlocked = document.getElementById('statsTotalBlocked');
+    DOM.statsBlockedRate = document.getElementById('statsBlockedRate');
+    DOM.statsDuration = document.getElementById('statsDuration');
+    DOM.statsNavEfficiency = document.getElementById('statsNavEfficiency');
+    DOM.statsPredictConfidence = document.getElementById('statsPredictConfidence');
+    DOM.statsCoverageCanvas = document.getElementById('statsCoverageCanvas');
+    DOM.statsCoverageWrap = document.getElementById('statsCoverageWrap');
+    DOM.statsCarCanvas = document.getElementById('statsCarCanvas');
+    DOM.statsCarWrap = document.getElementById('statsCarWrap');
+
     // 系统设置
     DOM.settingsPanel = document.getElementById('settingsPanel');
     DOM.settingsSaveBtn = document.getElementById('settingsSaveBtn');
@@ -783,6 +799,7 @@ function wireEvents() {
             switch (tabName) {
                 case 'user':     showUserCenter(); break;
                 case 'replay':   showReplayPanel(); break;
+                case 'stats':    showStatsPanel(); break;
                 case 'settings': showSettingsPanel(); break;
                 default:         showMapView(); break;
             }
@@ -1064,7 +1081,7 @@ function doLogin() {
 
 function hideAllCenterPanels() {
     // 直接用 getElementById 避免 DOM 缓存问题
-    var panels = ['mapArea', 'bottomPanels', 'userCenterPanel', 'replayPanel', 'settingsPanel'];
+    var panels = ['mapArea', 'bottomPanels', 'userCenterPanel', 'replayPanel', 'statsPanel', 'settingsPanel'];
     panels.forEach(function(id) {
         var el = document.getElementById(id);
         if (el) el.style.display = 'none';
@@ -1852,3 +1869,320 @@ function escapeHtml(str) { var d = document.createElement('div'); d.appendChild(
 
 window._simState = state;
 window._simAddLog = addLog;
+
+// ==================== 统计分析 ====================
+
+var STATS_API_BASE = window.location.protocol + '//' + window.location.hostname + ':8085/api/stats';
+
+function showStatsPanel() {
+    DOM.statsPanel.style.display = 'flex';
+    refreshStatsSessions();
+}
+
+function refreshStatsSessions() {
+    var sel = DOM.statsSessionSelect;
+    sel.innerHTML = '<option value="">-- 选择会话 --</option>';
+
+    fetch(STATS_API_BASE + '/sessions?page=0&size=20')
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+            var sessions = data.data || [];
+            sessions.forEach(function (s) {
+                var label = formatStatsSessionLabel(s);
+                sel.innerHTML += '<option value="' + escapeHtml(s.sessionId) + '">' + escapeHtml(label) + '</option>';
+            });
+            if (sessions.length === 0) {
+                sel.innerHTML += '<option value="" disabled>暂无历史会话</option>';
+            }
+        })
+        .catch(function () {
+            addLog('warn', '未连接到统计分析服务 8085');
+            sel.innerHTML += '<option value="" disabled>服务未连接</option>';
+        });
+
+    // 绑定 change 事件（仅一次）
+    if (!sel._statsWired) {
+        sel._statsWired = true;
+        sel.addEventListener('change', function () {
+            var sid = this.value;
+            if (sid) loadStatsSession(sid);
+        });
+    }
+}
+
+function formatStatsSessionLabel(session) {
+    var started = session.startTime ? formatDateTime(session.startTime) : (session.sessionId || '').slice(0, 8);
+    var cr = session.coverageRate != null ? (session.coverageRate * 100).toFixed(1) + '%' : '--';
+    return started + ' | ' + cr;
+}
+
+function loadStatsSession(sessionId) {
+    // 并行拉取四个接口
+    fetch(STATS_API_BASE + '/sessions/' + encodeURIComponent(sessionId) + '/overview')
+        .then(function (res) { return res.json(); })
+        .then(function (data) { renderStatsOverview(data); })
+        .catch(function (err) { addLog('error', '加载统计概览失败：' + err.message); });
+
+    fetch(STATS_API_BASE + '/sessions/' + encodeURIComponent(sessionId) + '/coverage-curve')
+        .then(function (res) { return res.json(); })
+        .then(function (data) { renderCoverageCurve(data); })
+        .catch(function (err) { addLog('error', '加载覆盖率曲线失败：' + err.message); });
+
+    fetch(STATS_API_BASE + '/sessions/' + encodeURIComponent(sessionId) + '/car-contribution')
+        .then(function (res) { return res.json(); })
+        .then(function (data) { renderCarContribution(data); })
+        .catch(function (err) { addLog('error', '加载各车贡献失败：' + err.message); });
+
+    fetch(STATS_API_BASE + '/sessions/' + encodeURIComponent(sessionId) + '/predict')
+        .then(function (res) { return res.json(); })
+        .then(function (data) { renderStatsPrediction(data); })
+        .catch(function (err) { addLog('error', '加载预测数据失败：' + err.message); });
+}
+
+function renderStatsOverview(data) {
+    if (!data || Object.keys(data).length === 0) return;
+
+    var coverageRate = data.coverageRate != null ? data.coverageRate : 0;
+    var totalMoves = data.totalMoves != null ? data.totalMoves : 0;
+    var totalBlocked = data.totalBlocked != null ? data.totalBlocked : 0;
+    var avgNavEfficiency = data.avgNavEfficiency != null ? data.avgNavEfficiency : 0;
+
+    DOM.statsCoverage.textContent = (coverageRate * 100).toFixed(1) + '%';
+    DOM.statsTotalMoves.textContent = totalMoves;
+    DOM.statsTotalBlocked.textContent = totalBlocked;
+
+    if (totalMoves > 0) {
+        DOM.statsBlockedRate.textContent = (totalBlocked / totalMoves * 100).toFixed(1) + '%';
+    } else {
+        DOM.statsBlockedRate.textContent = '--';
+    }
+
+    if (data.durationMs != null) {
+        DOM.statsDuration.textContent = (data.durationMs / 1000).toFixed(1) + 's';
+    } else {
+        DOM.statsDuration.textContent = '进行中';
+    }
+
+    if (avgNavEfficiency > 0) {
+        DOM.statsNavEfficiency.textContent = avgNavEfficiency.toFixed(2);
+    } else {
+        DOM.statsNavEfficiency.textContent = '--';
+    }
+}
+
+function renderStatsPrediction(data) {
+    if (!data) return;
+
+    var confidence = data.confidence || 'low';
+
+    var labelMap = { high: '高', medium: '中', low: '低' };
+    var colorMap = { high: '#4aff7a', medium: '#ffa500', low: '#888888' };
+
+    DOM.statsPredictConfidence.textContent = labelMap[confidence] || '未知';
+    DOM.statsPredictConfidence.style.color = colorMap[confidence] || '#888888';
+}
+
+function renderCoverageCurve(data) {
+    var canvas = DOM.statsCoverageCanvas;
+    var wrap = DOM.statsCoverageWrap;
+    var dpr = window.devicePixelRatio || 1;
+    var w = wrap.clientWidth;
+    var h = wrap.clientHeight;
+
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+
+    var ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    // 背景
+    ctx.fillStyle = '#061529';
+    ctx.fillRect(0, 0, w, h);
+
+    var points = data.points || [];
+    if (points.length === 0) {
+        ctx.fillStyle = '#667788';
+        ctx.font = '12px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('暂无数据', w / 2, h / 2);
+        return;
+    }
+
+    var margin = { left: 48, right: 16, top: 16, bottom: 28 };
+    var pw = w - margin.left - margin.right;
+    var ph = h - margin.top - margin.bottom;
+
+    // 计算坐标范围
+    var minTick = points[0].tick;
+    var maxTick = points[points.length - 1].tick;
+    var tickRange = maxTick - minTick || 1;
+    var maxCoverage = 1.0;
+
+    // 坐标轴
+    ctx.strokeStyle = '#334455';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(margin.left, margin.top);
+    ctx.lineTo(margin.left, margin.top + ph);
+    ctx.lineTo(margin.left + pw, margin.top + ph);
+    ctx.stroke();
+
+    // Y轴刻度 (0%, 25%, 50%, 75%, 100%)
+    ctx.fillStyle = '#667788';
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'right';
+    for (var pct = 0; pct <= 100; pct += 25) {
+        var y = margin.top + ph - (pct / 100) * ph;
+        ctx.fillText(pct + '%', margin.left - 6, y + 3);
+        ctx.strokeStyle = '#1a2a3a';
+        ctx.beginPath();
+        ctx.moveTo(margin.left, y);
+        ctx.lineTo(margin.left + pw, y);
+        ctx.stroke();
+    }
+
+    // X轴刻度
+    ctx.textAlign = 'center';
+    var xSteps = Math.min(5, points.length);
+    for (var i = 0; i <= xSteps; i++) {
+        var idx = Math.round((i / xSteps) * (points.length - 1));
+        if (idx >= points.length) idx = points.length - 1;
+        var tickVal = points[idx].tick;
+        var x = margin.left + ((tickVal - minTick) / tickRange) * pw;
+        ctx.fillText(tickVal, x, margin.top + ph + 14);
+    }
+
+    // 折线
+    ctx.strokeStyle = '#4a9eff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (var j = 0; j < points.length; j++) {
+        var px = margin.left + ((points[j].tick - minTick) / tickRange) * pw;
+        var py = margin.top + ph - (points[j].coverage / maxCoverage) * ph;
+        if (j === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+
+    // 末端圆点
+    if (points.length > 0) {
+        var lx = margin.left + ((points[points.length - 1].tick - minTick) / tickRange) * pw;
+        var ly = margin.top + ph - (points[points.length - 1].coverage / maxCoverage) * ph;
+        ctx.fillStyle = '#4a9eff';
+        ctx.beginPath();
+        ctx.arc(lx, ly, 4, 0, Math.PI * 2);
+        ctx.fill();
+    }
+}
+
+function renderCarContribution(data) {
+    var canvas = DOM.statsCarCanvas;
+    var wrap = DOM.statsCarWrap;
+    var dpr = window.devicePixelRatio || 1;
+    var w = wrap.clientWidth;
+    var h = wrap.clientHeight;
+
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+
+    var ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    // 背景
+    ctx.fillStyle = '#061529';
+    ctx.fillRect(0, 0, w, h);
+
+    var cars = data.cars || [];
+    if (cars.length === 0) {
+        ctx.fillStyle = '#667788';
+        ctx.font = '12px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('暂无数据', w / 2, h / 2);
+        return;
+    }
+
+    var margin = { left: 42, right: 16, top: 22, bottom: 36 };
+    var pw = w - margin.left - margin.right;
+    var ph = h - margin.top - margin.bottom;
+
+    // 计算最大值
+    var maxVal = 0;
+    cars.forEach(function (c) {
+        var m = Math.max(c.moves || 0, c.blocked || 0, c.navCount || 0);
+        if (m > maxVal) maxVal = m;
+    });
+    if (maxVal === 0) maxVal = 1;
+
+    var barGroupWidth = Math.min(30, (pw / cars.length) * 0.7);
+    var barWidth = Math.max(2, barGroupWidth / 3);
+    var groupGap = pw / cars.length;
+
+    // 坐标轴
+    ctx.strokeStyle = '#334455';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(margin.left, margin.top);
+    ctx.lineTo(margin.left, margin.top + ph);
+    ctx.lineTo(margin.left + pw, margin.top + ph);
+    ctx.stroke();
+
+    // Y轴刻度
+    ctx.fillStyle = '#667788';
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'right';
+    for (var pct = 0; pct <= 100; pct += 25) {
+        var yv = (pct / 100) * maxVal;
+        var y = margin.top + ph - (pct / 100) * ph;
+        ctx.fillText(Math.round(yv), margin.left - 6, y + 3);
+        ctx.strokeStyle = '#1a2a3a';
+        ctx.beginPath();
+        ctx.moveTo(margin.left, y);
+        ctx.lineTo(margin.left + pw, y);
+        ctx.stroke();
+    }
+
+    // 绘制柱子
+    var colors = { moves: '#4a9eff', blocked: '#ff4a4a', navCount: '#4aff7a' };
+    var keys = ['moves', 'blocked', 'navCount'];
+
+    cars.forEach(function (car, ci) {
+        var gx = margin.left + ci * groupGap + (groupGap - barGroupWidth) / 2;
+        keys.forEach(function (key, ki) {
+            var val = car[key] || 0;
+            var barH = (val / maxVal) * ph;
+            var bx = gx + ki * barWidth;
+            var by = margin.top + ph - barH;
+            ctx.fillStyle = colors[key];
+            ctx.fillRect(bx, by, barWidth - 1, barH);
+        });
+
+        // X轴 carId 标签
+        ctx.fillStyle = '#8899aa';
+        ctx.font = '8px monospace';
+        ctx.textAlign = 'center';
+        var shortId = (car.carId || '').length > 6 ? (car.carId || '').slice(-4) : (car.carId || '');
+        ctx.fillText(shortId, gx + barGroupWidth / 2, margin.top + ph + 14);
+    });
+
+    // 图例
+    var legendX = margin.left;
+    var legendY = 6;
+    var legendItems = [
+        { label: 'moves', color: '#4a9eff' },
+        { label: 'blocked', color: '#ff4a4a' },
+        { label: 'navCount', color: '#4aff7a' }
+    ];
+    ctx.font = '8px monospace';
+    legendItems.forEach(function (item, i) {
+        var lx = legendX + i * 70;
+        ctx.fillStyle = item.color;
+        ctx.fillRect(lx, legendY, 8, 8);
+        ctx.fillStyle = '#8899aa';
+        ctx.textAlign = 'left';
+        ctx.fillText(item.label, lx + 11, legendY + 8);
+    });
+}

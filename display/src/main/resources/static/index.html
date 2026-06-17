@@ -42,6 +42,7 @@
         <nav class="nav-tabs" id="navTabs">
             <button class="nav-tab active" data-tab="realtime">实时系统</button>
             <button class="nav-tab" data-tab="replay">回放分析</button>
+            <button class="nav-tab" data-tab="stats">统计分析</button>
             <button class="nav-tab" data-tab="settings">系统设置</button>
             <button class="nav-tab" data-tab="user">用户中心</button>
         </nav>
@@ -261,6 +262,68 @@
                 <span>步数 <b class="mono" id="replaySteps">0</b></span>
                 <span>Tick <b class="mono" id="replayTick">0</b></span>
                 <span>会话ID <b class="mono" id="replaySessionId" style="font-size:9px;">--</b></span>
+            </div>
+        </div>
+
+        <!-- ====== 统计分析页 ====== -->
+        <div class="center-page" id="statsPanel" style="display:none;">
+            <div class="center-page-header">
+                <span class="center-page-icon">📊</span>
+                <span>统计分析</span>
+            </div>
+            <div class="replay-toolbar">
+                <select id="statsSessionSelect" class="sim-select" style="flex:1;max-width:280px;">
+                    <option value="">-- 选择会话 --</option>
+                </select>
+            </div>
+            <div class="stats-content" style="display:flex;flex-direction:column;gap:14px;padding:14px;overflow-y:auto;flex:1;">
+                <!-- 概览卡片 -->
+                <div class="stats-overview-cards" id="statsOverviewCards" style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;">
+                    <div class="stats-card" style="padding:16px 20px;background:rgba(255,255,255,0.04);border-radius:10px;border:1px solid var(--border-color);text-align:center;">
+                        <div class="stats-card-label" style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">覆盖率</div>
+                        <div class="stats-card-value mono" id="statsCoverage" style="font-size:26px;font-weight:700;color:var(--accent-cyan);">--</div>
+                    </div>
+                    <div class="stats-card" style="padding:16px 20px;background:rgba(255,255,255,0.04);border-radius:10px;border:1px solid var(--border-color);text-align:center;">
+                        <div class="stats-card-label" style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">总步数</div>
+                        <div class="stats-card-value mono" id="statsTotalMoves" style="font-size:26px;font-weight:700;color:#4a9eff;">--</div>
+                    </div>
+                    <div class="stats-card" style="padding:16px 20px;background:rgba(255,255,255,0.04);border-radius:10px;border:1px solid var(--border-color);text-align:center;">
+                        <div class="stats-card-label" style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">总受阻</div>
+                        <div class="stats-card-value mono" id="statsTotalBlocked" style="font-size:26px;font-weight:700;color:#ff4a4a;">--</div>
+                    </div>
+                    <div class="stats-card" style="padding:16px 20px;background:rgba(255,255,255,0.04);border-radius:10px;border:1px solid var(--border-color);text-align:center;">
+                        <div class="stats-card-label" style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">受阻率</div>
+                        <div class="stats-card-value mono" id="statsBlockedRate" style="font-size:26px;font-weight:700;color:#ffa500;">--</div>
+                    </div>
+                    <div class="stats-card" style="padding:16px 20px;background:rgba(255,255,255,0.04);border-radius:10px;border:1px solid var(--border-color);text-align:center;">
+                        <div class="stats-card-label" style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">总时长</div>
+                        <div class="stats-card-value mono" id="statsDuration" style="font-size:26px;font-weight:700;color:#ccc;">--</div>
+                    </div>
+                    <div class="stats-card" style="padding:16px 20px;background:rgba(255,255,255,0.04);border-radius:10px;border:1px solid var(--border-color);text-align:center;">
+                        <div class="stats-card-label" style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">导航效率</div>
+                        <div class="stats-card-value mono" id="statsNavEfficiency" style="font-size:26px;font-weight:700;color:#4aff7a;">--</div>
+                    </div>
+                </div>
+                <!-- 预测卡片 -->
+                <div class="stats-predict-card" id="statsPredictCard" style="display:flex;gap:14px;padding:14px 20px;background:rgba(255,255,255,0.04);border-radius:10px;border:1px solid var(--border-color);align-items:center;flex-wrap:wrap;">
+                    <span style="color:var(--text-muted);font-size:13px;">📈 预测置信度</span>
+                    <b class="mono" id="statsPredictConfidence" style="font-size:18px;">--</b>
+                </div>
+                <!-- 图表区 -->
+                <div style="display:flex;gap:14px;flex-wrap:wrap;">
+                    <div style="flex:1;min-width:340px;background:rgba(255,255,255,0.03);border-radius:10px;border:1px solid var(--border-color);padding:12px;">
+                        <div style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">📈 覆盖率曲线</div>
+                        <div style="position:relative;width:100%;height:280px;" id="statsCoverageWrap">
+                            <canvas id="statsCoverageCanvas" style="width:100%;height:100%;"></canvas>
+                        </div>
+                    </div>
+                    <div style="flex:1;min-width:340px;background:rgba(255,255,255,0.03);border-radius:10px;border:1px solid var(--border-color);padding:12px;">
+                        <div style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">📊 各车贡献</div>
+                        <div style="position:relative;width:100%;height:280px;" id="statsCarWrap">
+                            <canvas id="statsCarCanvas" style="width:100%;height:100%;"></canvas>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 

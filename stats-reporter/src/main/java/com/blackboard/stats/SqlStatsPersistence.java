@@ -71,7 +71,8 @@ public class SqlStatsPersistence {
      */
     public void upsertSessionStats(String sessionId, int totalCells, int exploredCells,
                                    double coverageRate, int totalMoves, int totalBlocked,
-                                   int totalNavCount, String perCarStatsJson, long updatedAt) {
+                                   int totalNavCount, double avgNavEfficiency,
+                                   String perCarStatsJson, long updatedAt) {
         if (connection == null) {
             return;
         }
@@ -90,7 +91,7 @@ public class SqlStatsPersistence {
             if (exists) {
                 String updateSql = "UPDATE session_stats SET total_cells=?, explored_cells=?, "
                         + "coverage_rate=?, total_moves=?, total_blocked=?, total_nav_count=?, "
-                        + "per_car_stats_json=?, updated_at=? WHERE session_id=?";
+                        + "avg_nav_efficiency=?, per_car_stats_json=?, updated_at=? WHERE session_id=?";
                 try (PreparedStatement ps = connection.prepareStatement(updateSql)) {
                     ps.setInt(1, totalCells);
                     ps.setInt(2, exploredCells);
@@ -98,15 +99,17 @@ public class SqlStatsPersistence {
                     ps.setInt(4, totalMoves);
                     ps.setInt(5, totalBlocked);
                     ps.setInt(6, totalNavCount);
-                    ps.setString(7, perCarStatsJson);
-                    ps.setLong(8, updatedAt);
-                    ps.setString(9, sessionId);
+                    ps.setDouble(7, avgNavEfficiency);
+                    ps.setString(8, perCarStatsJson);
+                    ps.setLong(9, updatedAt);
+                    ps.setString(10, sessionId);
                     ps.executeUpdate();
                 }
             } else {
                 String insertSql = "INSERT INTO session_stats(session_id, total_cells, explored_cells, "
                         + "coverage_rate, total_moves, total_blocked, total_nav_count, "
-                        + "per_car_stats_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                        + "avg_nav_efficiency, per_car_stats_json, updated_at) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
                 try (PreparedStatement ps = connection.prepareStatement(insertSql)) {
                     ps.setString(1, sessionId);
                     ps.setInt(2, totalCells);
@@ -115,8 +118,9 @@ public class SqlStatsPersistence {
                     ps.setInt(5, totalMoves);
                     ps.setInt(6, totalBlocked);
                     ps.setInt(7, totalNavCount);
-                    ps.setString(8, perCarStatsJson);
-                    ps.setLong(9, updatedAt);
+                    ps.setDouble(8, avgNavEfficiency);
+                    ps.setString(9, perCarStatsJson);
+                    ps.setLong(10, updatedAt);
                     ps.executeUpdate();
                 }
             }

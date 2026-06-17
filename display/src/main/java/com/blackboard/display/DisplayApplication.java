@@ -35,7 +35,8 @@ public class DisplayApplication {
 
     private static final String DB_URL = "jdbc:sqlserver://LAPTOP-LTTJ001U;databaseName=ExplorationDB;encrypt=false;trustServerCertificate=true";
     private static final String DB_USERNAME = "sa";
-    private static final String DB_PASSWORD = "yxy450716";
+    private static final String DB_PASSWORD = "yxy450716" +
+            "";
 
     public static void main(String[] args) throws Exception {
 
