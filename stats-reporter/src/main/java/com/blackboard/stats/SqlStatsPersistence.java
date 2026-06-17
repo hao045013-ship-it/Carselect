@@ -350,4 +350,115 @@ public class SqlStatsPersistence {
         }
         return 0;
     }
+
+    /**
+     * 多会话覆盖率曲线对比数据
+     *
+     * @param sessionIds 会话 ID 列表（最多5个）
+     * @return key=sessionId, value=采样点列表 [{tick, coverage}]
+     */
+    public Map<String, List<Map<String, Object>>> getCompareData(List<String> sessionIds) {
+        Map<String, List<Map<String, Object>>> result = new LinkedHashMap<>();
+        if (connection == null || sessionIds == null || sessionIds.isEmpty()) {
+            return result;
+        }
+
+        // 先按传入顺序初始化
+        for (String sid : sessionIds) {
+            result.put(sid, new ArrayList<>());
+        }
+
+        // 动态拼 IN 占位符
+        StringBuilder sql = new StringBuilder(
+                "SELECT session_id, tick, coverage FROM coverage_curve WHERE session_id IN (");
+        for (int i = 0; i < sessionIds.size(); i++) {
+            if (i > 0) sql.append(", ");
+            sql.append("?");
+        }
+        sql.append(") ORDER BY session_id, tick ASC");
+
+        try (PreparedStatement ps = connection.prepareStatement(sql.toString())) {
+            for (int i = 0; i < sessionIds.size(); i++) {
+                ps.setString(i + 1, sessionIds.get(i));
+            }
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String sid = rs.getString("session_id");
+                    List<Map<String, Object>> points = result.get(sid);
+                    if (points == null) {
+                        points = new ArrayList<>();
+                        result.put(sid, points);
+                    }
+                    Map<String, Object> point = new LinkedHashMap<>();
+                    point.put("tick", rs.getLong("tick"));
+                    point.put("coverage", rs.getDouble("coverage"));
+                    points.add(point);
+                }
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return result;
+    }
+
+    /**
+     * 热力图数据：统计每个格子的访问次数
+     */
+    public Map<String, Object> getHeatmapData(String sessionId) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("sessionId", sessionId);
+        result.put("mapWidth", 0);
+        result.put("mapHeight", 0);
+        result.put("maxCount", 0);
+        result.put("cells", List.of());
+
+        if (connection == null) {
+            return result;
+        }
+
+        // 查地图尺寸
+        String sizeSql = "SELECT map_width, map_height FROM session WHERE session_id = ?";
+        try (PreparedStatement ps = connection.prepareStatement(sizeSql)) {
+            ps.setString(1, sessionId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    result.put("mapWidth", rs.getInt("map_width"));
+                    result.put("mapHeight", rs.getInt("map_height"));
+                }
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+
+        // 查访问计数
+        String sql = "SELECT x, y, COUNT(*) as visit_count FROM event_log "
+                + "WHERE session_id = ? AND event_type = 'MOVE' AND x IS NOT NULL AND y IS NOT NULL "
+                + "GROUP BY x, y ORDER BY x, y";
+        List<Map<String, Object>> cells = new ArrayList<>();
+        int maxCount = 0;
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setString(1, sessionId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    Map<String, Object> cell = new LinkedHashMap<>();
+                    int x = rs.getInt("x");
+                    int y = rs.getInt("y");
+                    int count = rs.getInt("visit_count");
+                    cell.put("x", x);
+                    cell.put("y", y);
+                    cell.put("count", count);
+                    cells.add(cell);
+                    if (count > maxCount) {
+                        maxCount = count;
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+
+        result.put("maxCount", maxCount);
+        result.put("cells", cells);
+        return result;
+    }
 }

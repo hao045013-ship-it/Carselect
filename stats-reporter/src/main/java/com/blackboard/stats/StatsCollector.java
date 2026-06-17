@@ -28,11 +28,6 @@ public class StatsCollector {
     /** 每辆车上次记录的步数快照，START 时重置 */
     private final Map<String, Integer> lastStepSnapshot = new HashMap<>();
 
-    /** 上次记录的已探索格子数，用于计算导航效率增量 */
-    private int lastExploredCells = 0;
-    /** 上次记录的总导航次数，用于计算导航效率增量 */
-    private int lastTotalNavCount = 0;
-
     public StatsCollector(Blackboard board, MessageQueue mq,
                           SqlStatsPersistence sqlPersistence,
                           PredictionEngine predictionEngine) {
@@ -81,8 +76,6 @@ public class StatsCollector {
         currentSessionId = sqlPersistence.getLatestSessionId();
         sessionStartTime = timestamp;
         lastStepSnapshot.clear();
-        lastExploredCells = 0;
-        lastTotalNavCount = 0;
         predictionEngine.reset();
     }
 
@@ -122,12 +115,8 @@ public class StatsCollector {
         predictionEngine.addPoint(tick, exploredCells);
         PredictionEngine.PredictionResult prediction = predictionEngine.predict(totalCells);
 
-        // 导航效率：本次增量的已探索格子 / 本次增量的导航次数
-        int deltaExplored = exploredCells - lastExploredCells;
-        int deltaNav = totalNavCount - lastTotalNavCount;
-        double avgNavEfficiency = (deltaNav > 0) ? (double) deltaExplored / deltaNav : 0.0;
-        lastExploredCells = exploredCells;
-        lastTotalNavCount = totalNavCount;
+        // 导航效率：累积已探索格子 / 累积导航次数
+        double avgNavEfficiency = (totalNavCount > 0) ? (double) exploredCells / totalNavCount : 0.0;
 
         JSONObject predictionJson = new JSONObject();
         predictionJson.put("estimatedRemainingTicks", prediction.estimatedRemainingTicks);

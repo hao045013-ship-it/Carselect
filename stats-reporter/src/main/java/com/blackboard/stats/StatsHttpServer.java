@@ -4,6 +4,12 @@ import com.alibaba.fastjson2.JSONObject;
 import com.blackboard.api.Blackboard;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -128,5 +134,59 @@ public class StatsHttpServer {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         return sqlPersistence.listSessions(page, size);
+    }
+
+    /**
+     * 多会话覆盖率曲线对比
+     * GET /api/stats/sessions/compare?ids=id1,id2,id3
+     */
+    @GetMapping("/sessions/compare")
+    public Map<String, Object> compareSessions(@RequestParam String ids) {
+        Map<String, Object> response = new LinkedHashMap<>();
+
+        if (ids == null || ids.isBlank()) {
+            response.put("sessions", List.of());
+            response.put("curves", Map.of());
+            return response;
+        }
+
+        List<String> idList = new ArrayList<>(Arrays.asList(ids.split(",")));
+        idList.removeIf(String::isBlank);
+        if (idList.size() > 5) {
+            idList = idList.subList(0, 5);
+        }
+
+        Map<String, List<Map<String, Object>>> curves = sqlPersistence.getCompareData(idList);
+
+        DateTimeFormatter fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+        List<Map<String, Object>> sessions = new ArrayList<>();
+        for (String sid : idList) {
+            Map<String, Object> sessionInfo = new LinkedHashMap<>();
+            sessionInfo.put("sessionId", sid);
+
+            Map<String, Object> stats = sqlPersistence.getSessionStats(sid);
+            if (!stats.isEmpty() && stats.get("updatedAt") != null) {
+                long updatedAt = (long) stats.get("updatedAt");
+                String label = LocalDateTime.ofInstant(
+                        Instant.ofEpochMilli(updatedAt), ZoneId.systemDefault()).format(fmt);
+                sessionInfo.put("label", label);
+            } else {
+                sessionInfo.put("label", sid.length() > 8 ? sid.substring(0, 8) : sid);
+            }
+            sessions.add(sessionInfo);
+        }
+
+        response.put("sessions", sessions);
+        response.put("curves", curves);
+        return response;
+    }
+
+    /**
+     * 热力图访问数据
+     * GET /api/stats/sessions/{sessionId}/heatmap
+     */
+    @GetMapping("/sessions/{sessionId}/heatmap")
+    public Map<String, Object> getHeatmap(@PathVariable String sessionId) {
+        return sqlPersistence.getHeatmapData(sessionId);
     }
 }
