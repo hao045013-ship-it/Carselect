@@ -123,7 +123,7 @@ public interface Blackboard {
     List<String> getUserHistory(String userId);
 
     // ==================== 原子操作 ====================
-    void atomicMove(String carId, int oldX, int oldY, int newX, int newY, int visionRadius);
+    boolean atomicMove(String carId, int oldX, int oldY, int newX, int newY, int visionRadius);
 
     // ==================== 工具 ====================
     double getExploredPercent();

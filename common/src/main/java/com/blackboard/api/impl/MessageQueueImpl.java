@@ -30,6 +30,7 @@ public class MessageQueueImpl implements MessageQueue {
     private final int port;
     private Connection connection;
     private Channel channel;
+    private int lastDeclaredCarCount = 0;
 
     public MessageQueueImpl(String host, int port) {
         this.host = host;
@@ -53,6 +54,7 @@ public class MessageQueueImpl implements MessageQueue {
     @Override
     public void declareAllQueues(int carCount) {
         try {
+            lastDeclaredCarCount = Math.max(lastDeclaredCarCount, carCount);
             // 声明 Fanout 交换机
             channel.exchangeDeclare(MQKeys.EXCHANGE_UPDATE_VIEW, "fanout", true);
 
@@ -89,17 +91,56 @@ public class MessageQueueImpl implements MessageQueue {
     // ==================== 通用发布 ====================
     private void publish(String routingKey, String message) {
         try {
+            ensureOpenChannel();
             channel.basicPublish("", routingKey, null, message.getBytes("UTF-8"));
         } catch (Exception e) {
-            throw new RuntimeException("Failed to publish message to " + routingKey, e);
+            try {
+                reconnect();
+                channel.basicPublish("", routingKey, null, message.getBytes("UTF-8"));
+            } catch (Exception retryError) {
+                throw new RuntimeException("Failed to publish message to " + routingKey, retryError);
+            }
         }
     }
 
     private void publishToExchange(String exchange, String message) {
         try {
+            ensureOpenChannel();
             channel.basicPublish(exchange, "", null, message.getBytes("UTF-8"));
         } catch (Exception e) {
-            throw new RuntimeException("Failed to publish to exchange " + exchange, e);
+            try {
+                reconnect();
+                channel.basicPublish(exchange, "", null, message.getBytes("UTF-8"));
+            } catch (Exception retryError) {
+                throw new RuntimeException("Failed to publish to exchange " + exchange, retryError);
+            }
+        }
+    }
+
+    private synchronized void ensureOpenChannel() {
+        if (connection == null || channel == null || !connection.isOpen() || !channel.isOpen()) {
+            reconnect();
+        }
+    }
+
+    private synchronized void reconnect() {
+        closeQuietly();
+        connect();
+        declareAllQueues(lastDeclaredCarCount);
+    }
+
+    private void closeQuietly() {
+        try {
+            if (channel != null && channel.isOpen()) {
+                channel.close();
+            }
+        } catch (Exception ignored) {
+        }
+        try {
+            if (connection != null && connection.isOpen()) {
+                connection.close();
+            }
+        } catch (Exception ignored) {
         }
     }
 
@@ -344,5 +385,23 @@ public class MessageQueueImpl implements MessageQueue {
         }
 
         publish(queueName, buildMessage(cmd, data));
+    }
+
+    public void purgeSimulationCommandQueues(int carCount) {
+        ensureOpenChannel();
+        purgeQueue(MQKeys.NAVIGATOR_CMD);
+        purgeQueue(MQKeys.TARGET_PLANNER_CMD);
+        purgeQueue(MQKeys.OBSTACLE_CMD);
+        for (int i = 1; i <= carCount; i++) {
+            purgeQueue(MQKeys.carQueue("Car" + String.format("%03d", i)));
+        }
+    }
+
+    private void purgeQueue(String queueName) {
+        try {
+            channel.queuePurge(queueName);
+        } catch (Exception ignored) {
+            // Queue may not exist yet; it will be declared before use.
+        }
     }
 }

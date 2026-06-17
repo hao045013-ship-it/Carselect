@@ -6,10 +6,10 @@ rabbitmq:
   host: localhost
   port: 5672
 
-sqlserver:
-  url: jdbc:sqlserver://LAPTOP-LTTJ001U;databaseName=ExplorationDB;encrypt=false;trustServerCertificate=true
-  username: sa
-  password: yxy450716
-
 server:
   port: 8085
+
+sqlserver:
+  url: jdbc:sqlserver://127.0.0.1:1433;databaseName=ExplorationDB;encrypt=true;trustServerCertificate=true;characterEncoding=UTF-8
+  username: sa
+  password: Chen12345678

@@ -1,36 +1,36 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>多机器人协作巡检仿真系统</title>
-<link rel="stylesheet" href="style.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>多机器人协作巡检仿真系统</title>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-    <!-- ==================== 登录弹窗 ==================== -->
-    <div id="loginOverlay" class="login-overlay" style="display:none;">
-        <div class="login-card">
-            <div class="login-card-header">
-                <span class="login-card-icon">👤</span>
-                <span class="login-card-title" id="loginCardTitle">用户登录</span>
-                <button class="login-close" id="loginClose">✕</button>
+<!-- ==================== 登录弹窗 ==================== -->
+<div id="loginOverlay" class="login-overlay" style="display:none;">
+    <div class="login-card">
+        <div class="login-card-header">
+            <span class="login-card-icon">👤</span>
+            <span class="login-card-title" id="loginCardTitle">用户登录</span>
+            <button class="login-close" id="loginClose">✕</button>
+        </div>
+        <div class="login-card-body">
+            <div class="login-field">
+                <label for="loginNickname">昵称</label>
+                <input type="text" id="loginNickname" class="login-input" placeholder="请输入昵称" maxlength="20" autocomplete="off">
             </div>
-            <div class="login-card-body">
-                <div class="login-field">
-                    <label for="loginNickname">昵称</label>
-                    <input type="text" id="loginNickname" class="login-input" placeholder="请输入昵称" maxlength="20" autocomplete="off">
-                </div>
-                <div class="login-field">
-                    <label for="loginPassword">密码</label>
-                    <input type="password" id="loginPassword" class="login-input" placeholder="请输入密码（6-20位）" maxlength="20" autocomplete="off">
-                </div>
-                <p class="login-hint" id="loginHint">已有账号？输入昵称+密码登录。新用户？输入昵称+密码自动注册。</p>
-                <button class="login-btn" id="loginBtn">登 录 / 注 册</button>
-                <p class="login-error" id="loginError"></p>
+            <div class="login-field">
+                <label for="loginPassword">密码</label>
+                <input type="password" id="loginPassword" class="login-input" placeholder="请输入密码（6-20位）" maxlength="20" autocomplete="off">
             </div>
+            <p class="login-hint" id="loginHint">已有账号？输入昵称+密码登录。新用户？输入昵称+密码自动注册。</p>
+            <button class="login-btn" id="loginBtn">登 录 / 注 册</button>
+            <p class="login-error" id="loginError"></p>
         </div>
     </div>
+</div>
 
 <!-- ==================== 顶部标题栏 ==================== -->
 <header id="mainHeader">
@@ -97,31 +97,32 @@
             </div>
         </section>
 
-        <!-- 参数设置 -->
+        <!-- 地图设置 -->
         <section class="panel-card">
             <h3 class="card-title">
-                <span class="card-icon">⚙</span> 参数设置
+                <span class="card-icon">▦</span> 地图设置
             </h3>
             <div class="card-body">
                 <div class="param-row">
-                    <label for="robotCount">机器人数量</label>
-                    <input type="number" id="robotCount" class="sim-input" value="5" min="1" max="20" step="1">
-                </div>
-                <div class="param-row">
-                    <label>障碍物密度</label>
-                    <div class="range-with-value">
-                        <input type="range" id="obstacleDensity" min="0" max="40" value="5" step="1">
-                        <span class="range-value" id="densityValue">5%</span>
-                    </div>
-                </div>
-                <div class="param-row">
                     <label for="mapWidth">地图宽度</label>
-                    <input type="number" id="mapWidth" class="sim-input" value="26" min="15" max="40">
+                    <input type="number" id="mapWidth" class="sim-input" value="26" min="10" max="100">
                 </div>
                 <div class="param-row">
                     <label for="mapHeight">地图高度</label>
-                    <input type="number" id="mapHeight" class="sim-input" value="16" min="10" max="30">
+                    <input type="number" id="mapHeight" class="sim-input" value="16" min="10" max="100">
                 </div>
+                <input type="file" id="mapImageInput" accept="image/*" style="display:none;">
+                <button class="btn-secondary" id="btnUploadMap">
+                    <span class="btn-icon">📁</span> 上传地图背景
+                </button>
+                <div id="mapImageInfo" class="map-image-info" style="display:none;">
+                    <span class="image-file-name" id="imageFileName"></span>
+                    <button class="btn-remove-img" id="btnRemoveMap" title="移除背景图">✕</button>
+                </div>
+                <button class="btn-secondary btn-primary-line" id="btnApplyConfig">
+                    <span class="btn-icon">✓</span> 应用地图配置
+                </button>
+                <p class="hint-text">应用地图配置会重新初始化地图；手动障碍物和小车请在应用后再添加。</p>
             </div>
         </section>
 
@@ -131,6 +132,13 @@
                 <span class="card-icon">■</span> 障碍物管理
             </h3>
             <div class="card-body">
+                <div class="param-row">
+                    <label>随机障碍密度</label>
+                    <div class="range-with-value">
+                        <input type="range" id="obstacleDensity" min="0" max="40" value="5" step="1">
+                        <span class="range-value" id="densityValue">5%</span>
+                    </div>
+                </div>
                 <button class="btn-secondary" data-action="randomObstacle" id="btnRandomObs">
                     <span class="btn-icon">🎲</span> 随机生成障碍物
                 </button>
@@ -145,32 +153,30 @@
                     </label>
                 </div>
                 <p class="hint-text" id="manualHint">开启后点击地图添加/移除障碍物（按住 Shift 添加动态障碍）</p>
+            </div>
+        </section>
+
+        <!-- 小车设置 -->
+        <section class="panel-card">
+            <h3 class="card-title">
+                <span class="card-icon">◆</span> 小车设置
+            </h3>
+            <div class="card-body">
+                <div class="param-row">
+                    <label for="robotCount">小车数量</label>
+                    <input type="number" id="robotCount" class="sim-input" value="5" min="1" max="20" step="1">
+                </div>
+                <button class="btn-secondary" id="btnRandomCars">
+                    <span class="btn-icon">🎲</span> 随机部署小车
+                </button>
                 <div class="param-row toggle-row">
-                    <label for="carPlaceToggle">小车部署</label>
+                    <label for="carPlaceToggle">手动部署小车</label>
                     <label class="toggle-switch">
                         <input type="checkbox" id="carPlaceToggle">
                         <span class="toggle-slider"></span>
                     </label>
                 </div>
                 <p class="hint-text" id="carPlaceHint">开启后点击地图添加小车（Ctrl+点击移除）</p>
-            </div>
-        </section>
-
-        <!-- 地图背景 -->
-        <section class="panel-card">
-            <h3 class="card-title">
-                <span class="card-icon">🖼</span> 地图背景
-            </h3>
-            <div class="card-body">
-                <input type="file" id="mapImageInput" accept="image/*" style="display:none;">
-                <button class="btn-secondary" id="btnUploadMap">
-                    <span class="btn-icon">📁</span> 导入图片地图
-                </button>
-                <div id="mapImageInfo" class="map-image-info" style="display:none;">
-                    <span class="image-file-name" id="imageFileName"></span>
-                    <button class="btn-remove-img" id="btnRemoveMap" title="移除背景图">✕</button>
-                </div>
-                <p class="hint-text">支持 JPG/PNG 图片作为地图背景</p>
             </div>
         </section>
 

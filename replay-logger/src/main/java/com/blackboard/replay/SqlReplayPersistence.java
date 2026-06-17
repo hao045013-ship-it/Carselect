@@ -25,8 +25,28 @@ public class SqlReplayPersistence {
     public SqlReplayPersistence(String url, String username, String password) {
         try {
             connection = DriverManager.getConnection(url, username, password);
+            ensureIndexes();
         } catch (SQLException e) {
             e.printStackTrace();
+        }
+    }
+
+    private void ensureIndexes() {
+        if (connection == null) {
+            return;
+        }
+        String sql = "IF OBJECT_ID('dbo.snapshot', 'U') IS NOT NULL "
+                + "AND NOT EXISTS ("
+                + "SELECT 1 FROM sys.indexes "
+                + "WHERE name = 'idx_snapshot_session_tick' "
+                + "AND object_id = OBJECT_ID('dbo.snapshot')) "
+                + "BEGIN "
+                + "CREATE INDEX idx_snapshot_session_tick ON dbo.snapshot(session_id, tick) "
+                + "END";
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.execute();
+        } catch (SQLException e) {
+            System.err.println("[SqlReplayPersistence] 创建 snapshot 索引失败: " + e.getMessage());
         }
     }
 
@@ -137,7 +157,13 @@ public class SqlReplayPersistence {
 
         try {
             long total = 0;
-            String countSql = "SELECT COUNT(*) FROM session";
+            String countSql = """
+                    SELECT COUNT(*)
+                    FROM session s
+                    WHERE EXISTS (
+                        SELECT 1 FROM snapshot sn WHERE sn.session_id = s.session_id
+                    )
+                    """;
             try (PreparedStatement ps = connection.prepareStatement(countSql);
                  ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
@@ -146,9 +172,15 @@ public class SqlReplayPersistence {
             }
 
             List<Map<String, Object>> sessions = new ArrayList<>();
-            String sql = "SELECT session_id, start_time, end_time, car_count, note "
-                    + "FROM session ORDER BY start_time DESC "
-                    + "OFFSET ? ROWS FETCH NEXT ? ROWS ONLY";
+            String sql = """
+                    SELECT s.session_id, s.start_time, s.end_time, s.car_count, s.note
+                    FROM session s
+                    WHERE EXISTS (
+                        SELECT 1 FROM snapshot sn WHERE sn.session_id = s.session_id
+                    )
+                    ORDER BY s.start_time DESC
+                    OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
+                    """;
             try (PreparedStatement ps = connection.prepareStatement(sql)) {
                 ps.setInt(1, offset);
                 ps.setInt(2, limit);
@@ -186,22 +218,28 @@ public class SqlReplayPersistence {
             return result;
         }
 
-        StringBuilder sql = new StringBuilder(
-                "SELECT id, ts, tick, coverage, state_json FROM snapshot WHERE session_id = ?");
+        StringBuilder where = new StringBuilder("WHERE session_id = ?");
         List<Object> params = new ArrayList<>();
         params.add(sessionId);
 
         if (fromTick != null) {
-            sql.append(" AND tick >= ?");
+            where.append(" AND tick >= ?");
             params.add(fromTick);
         }
         if (toTick != null) {
-            sql.append(" AND tick <= ?");
+            where.append(" AND tick <= ?");
             params.add(toTick);
         }
-        sql.append(" ORDER BY tick ASC");
+        String sql = "WITH ranked AS ("
+                + "SELECT id, ts, tick, coverage, state_json, "
+                + "ROW_NUMBER() OVER (PARTITION BY tick ORDER BY id ASC) AS rn "
+                + "FROM snapshot "
+                + where
+                + ") "
+                + "SELECT id, ts, tick, coverage, state_json FROM ranked "
+                + "WHERE rn = 1 ORDER BY tick ASC";
 
-        try (PreparedStatement ps = connection.prepareStatement(sql.toString())) {
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
             for (int i = 0; i < params.size(); i++) {
                 Object param = params.get(i);
                 if (param instanceof String) {

@@ -4,6 +4,7 @@ import com.alibaba.fastjson2.JSONObject;
 import com.blackboard.api.Blackboard;
 import com.blackboard.api.MessageQueue;
 import com.blackboard.constant.MQKeys;
+import com.blackboard.constant.RedisKeys;
 import com.blackboard.model.Position;
 import com.blackboard.model.SimState;
 
@@ -24,6 +25,8 @@ public class SnapshotRecorder {
 
     /** 当前 SQL 会话 ID，未开始时为 null */
     private String currentSessionId;
+    private long lastSqlSnapshotTick = Long.MIN_VALUE;
+    private long sessionStartBoardTick = 0L;
 
     public SnapshotRecorder(Blackboard board, MessageQueue mq, SqlReplayPersistence sqlPersistence) {
         this.board = board;
@@ -60,10 +63,11 @@ public class SnapshotRecorder {
         }
 
         switch (cmd) {
-            case MQKeys.CMD_START -> handleStart(timestamp);
+            case MQKeys.CMD_START -> handleStart(data,timestamp);
             case MQKeys.CMD_RESET -> handleReset(timestamp);
             case MQKeys.CMD_REFRESH_ALL -> handleRefreshAll(timestamp);
             case MQKeys.CMD_MOVED -> handleMoved(data, timestamp);
+            case MQKeys.CMD_TASK_FINISHED -> handleReset(timestamp);
             default -> {
                 // 其他命令忽略
             }
@@ -71,12 +75,38 @@ public class SnapshotRecorder {
     }
 
     /** START：创建新会话 */
-    private void handleStart(long timestamp) {
-        currentSessionId = UUID.randomUUID().toString();
+    private void handleStart(JSONObject data,long timestamp) {
+        // 优先使用 Controller 广播的 sessionId
+        String sessionIdFromEvent = data == null ? null : data.getString("sessionId");
+        if (sessionIdFromEvent != null && !sessionIdFromEvent.isBlank()) {
+            currentSessionId = sessionIdFromEvent;
+        } else {
+            currentSessionId = UUID.randomUUID().toString(); // fallback
+        }
+
+        lastSqlSnapshotTick = Long.MIN_VALUE;
+        sessionStartBoardTick = board.getCurrentTick();
+        SimState initialState = null;
+        String initialStateJson = data == null ? null : data.getString("initialStateJson");
+        if (initialStateJson != null && !initialStateJson.isBlank()) {
+            initialState = JSONObject.parseObject(initialStateJson, SimState.class);
+        }
+
+        if (initialState == null) {
+            initialState = buildSimState();
+        }
+
+        initialState.setTick(0L);
+
         int mapWidth = board.getMapWidth();
         int mapHeight = board.getMapHeight();
-        int carCount = board.getCarList().size(); // 用 getCarList() 更准确
+        int carCount = board.getCarList().size();
         sqlPersistence.startSession(currentSessionId, timestamp, mapWidth, mapHeight, carCount);
+        //SimState initialState = buildSimState();
+        // normalizeInitialState(initialState);   // 已删除
+        String stateJson = initialState.toJson();
+        board.saveSnapshot(stateJson);
+        persistSqlSnapshot(timestamp, 0L, initialState);
     }
 
     /** RESET：结束当前会话 */
@@ -90,15 +120,16 @@ public class SnapshotRecorder {
     /** REFRESH_ALL：保存完整状态快照 */
     private void handleRefreshAll(long timestamp) {
         SimState simState = buildSimState();
+        long tick = toReplayTick(simState.getTick());
+        simState.setTick(tick);
         String stateJson = simState.toJson();
-        long tick = simState.getTick();
         double coverage = simState.getExploredPercent() / 100.0;
 
         board.saveSnapshot(stateJson);
         board.saveCoverageHistory(tick, coverage);
 
         if (currentSessionId != null) {
-            sqlPersistence.insertSnapshot(currentSessionId, timestamp, tick, coverage, stateJson);
+            persistSqlSnapshot(timestamp, tick, simState);
         }
     }
 
@@ -111,14 +142,101 @@ public class SnapshotRecorder {
         int x = data.getIntValue("x");
         int y = data.getIntValue("y");
         long tick = board.getCurrentTick();
+        long replayTick = currentSessionId == null ? tick : toReplayTick(tick);
 
         board.appendTrace(carId, tick, x, y);
 
         if (currentSessionId != null) {
             JSONObject extra = new JSONObject();
-            extra.put("tick", tick);
+            extra.put("tick", replayTick);
             sqlPersistence.insertEventLog(
                     currentSessionId, timestamp, "MOVE", carId, x, y, extra.toJSONString());
+        }
+    }
+
+    private long toReplayTick(long boardTick) {
+        return Math.max(0L, boardTick - sessionStartBoardTick);
+    }
+
+    private void persistSqlSnapshot(long timestamp, long tick, SimState simState) {
+        if (currentSessionId == null || tick == lastSqlSnapshotTick) {
+            return;
+        }
+        double coverage = simState.getExploredPercent() / 100.0;
+        sqlPersistence.insertSnapshot(currentSessionId, timestamp, tick, coverage, simState.toJson());
+        lastSqlSnapshotTick = tick;
+    }
+
+    private void normalizeInitialState(SimState state) {
+        int width = state.getMapWidth();
+        int height = state.getMapHeight();
+        boolean[] initialMapView = new boolean[Math.max(0, width * height)];
+        boolean[] initialDynamicBlock = new boolean[Math.max(0, width * height)];
+
+        Map<String, SimState.CarInfo> cars = state.getCars();
+        if (cars != null) {
+            for (String carId : cars.keySet()) {
+                SimState.CarInfo car = cars.get(carId);
+                Position start = findInitialPosition(carId, car.getPosition());
+                car.setPosition(start);
+                car.setTarget(null);
+                car.setRouteList(new ArrayList<>());
+                car.setStatus("IDLE");
+                car.setStepsWalked(0);
+
+                if (start != null) {
+                    markInitialVision(initialMapView, width, height, start);
+                    int idx = start.getY() * width + start.getX();
+                    if (idx >= 0 && idx < initialDynamicBlock.length) {
+                        initialDynamicBlock[idx] = true;
+                    }
+                }
+            }
+        }
+
+        state.setMapView(initialMapView);
+        state.setDynamicBlock(initialDynamicBlock);
+        int explored = 0;
+        for (boolean cell : initialMapView) {
+            if (cell) {
+                explored++;
+            }
+        }
+        state.setExploredPercent(initialMapView.length == 0 ? 0.0 : explored * 100.0 / initialMapView.length);
+    }
+
+    private Position findInitialPosition(String carId, Position fallback) {
+        long bestTick = Long.MAX_VALUE;
+        Position best = null;
+        for (String trace : board.getTrace(carId)) {
+            String[] parts = trace.split(",");
+            if (parts.length < 3) {
+                continue;
+            }
+            try {
+                long tick = Long.parseLong(parts[0].trim());
+                int x = Integer.parseInt(parts[1].trim());
+                int y = Integer.parseInt(parts[2].trim());
+                if (tick < bestTick) {
+                    bestTick = tick;
+                    best = new Position(x, y);
+                }
+            } catch (NumberFormatException ignored) {
+                // Ignore malformed trace rows.
+            }
+        }
+        return best == null ? fallback : best;
+    }
+
+    private void markInitialVision(boolean[] mapView, int width, int height, Position center) {
+        for (int dy = -RedisKeys.VISION_RANGE; dy <= RedisKeys.VISION_RANGE; dy++) {
+            for (int dx = -RedisKeys.VISION_RANGE; dx <= RedisKeys.VISION_RANGE; dx++) {
+                int x = center.getX() + dx;
+                int y = center.getY() + dy;
+                if (x >= 0 && x < width && y >= 0 && y < height) {
+                    mapView[y * width + x] = true;
+                }
+            }
         }
     }
 

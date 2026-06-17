@@ -1,4 +1,4 @@
-/**
+﻿/**
  * app.js — 应用控制器
  * 多机器人协作巡检仿真系统
  *
@@ -8,8 +8,8 @@
 
 // ==================== 常量与配置 ====================
 
-var WEBSOCKET_URL = 'ws://localhost:8887';
-var WS_RECONNECT_MAX = 5;
+var WEBSOCKET_URL = 'ws://' + window.location.hostname + ':8887';
+var WS_RECONNECT_MAX = 30;
 var DEFAULT_MAP_WIDTH = 26;
 var DEFAULT_MAP_HEIGHT = 16;
 var DEFAULT_OBSTACLE_DENSITY = 5;
@@ -69,7 +69,7 @@ var DOM_UPDATE_INTERVAL = 100;
 var stateDirty = false;
 var _lastStepsSnapshot = '';
 
-// ==================== 初始化 ====================
+// ====================  初始化====================
 
 document.addEventListener('DOMContentLoaded', function () { init(); });
 
@@ -90,7 +90,7 @@ function cacheDomReferences() {
     DOM.systemTime = document.getElementById('systemTime');
     DOM.connectionStatus = document.getElementById('connectionStatus');
 
-    // 导航
+    //  导航
     DOM.navTabs = document.getElementById('navTabs');
 
     // 左侧
@@ -104,10 +104,12 @@ function cacheDomReferences() {
     DOM.densityValue = document.getElementById('densityValue');
     DOM.mapWidth = document.getElementById('mapWidth');
     DOM.mapHeight = document.getElementById('mapHeight');
+    DOM.btnApplyConfig = document.getElementById('btnApplyConfig');
     DOM.btnRandomObs = document.getElementById('btnRandomObs');
     DOM.btnClearObs = document.getElementById('btnClearObs');
     DOM.manualToggle = document.getElementById('manualToggle');
     DOM.manualHint = document.getElementById('manualHint');
+    DOM.btnRandomCars = document.getElementById('btnRandomCars');
     DOM.carPlaceToggle = document.getElementById('carPlaceToggle');
     DOM.carPlaceHint = document.getElementById('carPlaceHint');
     DOM.mapImageInput = document.getElementById('mapImageInput');
@@ -203,7 +205,7 @@ function cacheDomReferences() {
     DOM.onlineRobotCount = document.getElementById('onlineRobotCount');
     DOM.logContainer = document.getElementById('logContainer');
 
-    // 底部
+    // 搴曢儴
     DOM.statCoverage = document.getElementById('statCoverage').querySelector('.stat-box-value');
     DOM.statSteps   = document.getElementById('statSteps').querySelector('.stat-box-value');
     DOM.statTick    = document.getElementById('statTick').querySelector('.stat-box-value');
@@ -283,14 +285,14 @@ function drawTrendChart() {
     var pw = w - padLeft - padRight;
     var ph = h - padTop - padBottom;
 
-    // 背景网格
+    // 鑳屾櫙缃戞牸
     ctx.strokeStyle = 'rgba(30,58,95,0.2)';
     ctx.lineWidth = 0.5;
     var gridLines = 5;
     for (var g = 0; g <= gridLines; g++) {
         var gy = padTop + (ph / gridLines) * g;
         ctx.beginPath(); ctx.moveTo(padLeft, gy); ctx.lineTo(w - padRight, gy); ctx.stroke();
-        // Y 标签
+        //  Y 标签
         ctx.fillStyle = '#445566';
         ctx.font = '9px "Consolas", monospace';
         ctx.textAlign = 'right';
@@ -326,7 +328,7 @@ function drawTrendChart() {
     ctx.fillStyle = fillGrad;
     ctx.fill();
 
-    // 绘制折线
+    //绘制折线
     ctx.beginPath();
     for (var j = 0; j < _trendData.length; j++) {
         var lx = padLeft + stepX * j;
@@ -360,7 +362,7 @@ function updateClock() {
     DOM.systemTime.textContent = padZero(now.getHours()) + ':' + padZero(now.getMinutes()) + ':' + padZero(now.getSeconds());
 }
 
-// ==================== 状态规范化 ====================
+// ==================== 状态规范化  ====================
 
 function normalizeState(raw) {
     if (!raw || typeof raw !== 'object') return;
@@ -407,7 +409,7 @@ function normalizeState(raw) {
         state.connectedRobots = Object.keys(state.cars).length;
     }
 
-    // 记录趋势数据
+    // 璁板綍瓒嬪娍鏁版嵁
     if (state.mapWidth !== oldMapWidth || state.mapHeight !== oldMapHeight) {
         recalcMapLayout();
     }
@@ -456,7 +458,7 @@ function tryConnectWebSocket() {
                 stateDirty = true;
                 return;
             }
-            // 命令响应（含 success 字段） vs 仿真状态广播
+            // 命令响应（含 success 字段）vs 仿真状态广播
             if (raw.success !== undefined) {
                 handleCommandResponse(raw);
             } else {
@@ -467,7 +469,7 @@ function tryConnectWebSocket() {
                     updateControlButtons();
                 }
             }
-        } catch (e) { addLog('error', 'JSON 解析失败: ' + e.message); }
+        } catch (e) { addLog('error', 'JSON解析失败: ' + e.message); }
     };
     ws.onclose = function () { wsConnected = false; updateConnectionUI(false); addLog('warn', 'WebSocket 连接已断开'); scheduleReconnect(); };
     ws.onerror = function () { wsConnected = false; updateConnectionUI(false); };
@@ -495,7 +497,7 @@ function updateConnectionUI(connected) {
 function sendCommand(cmd, data) {
     var payload = { command: cmd }; if (data) payload.data = data;
     if (ws && ws.readyState === WebSocket.OPEN) { ws.send(JSON.stringify(payload)); }
-    else { addLog('warn', 'WebSocket 未连接，无法发送命令: ' + cmd); }
+    else { addLog('warn', 'WebSocket 未连接，无法发送命令 ' + cmd); }
 }
 
 /** 处理后端返回的命令响应（用户操作等） */
@@ -514,12 +516,12 @@ function handleCommandResponse(raw) {
             currentUser.replayCount = data.replayCount || 0;
             DOM.headerUserName.textContent = data.nickname;
             DOM.loginBtn.disabled = false;
-            DOM.loginBtn.textContent = '登 录 / 注 册';
+            DOM.loginBtn.textContent = '登录 / 注册';
             hideLoginModal();
             addLog('success', data.message || ('登录成功: ' + data.nickname));
         }
         // LOGOUT 响应
-        else if (data.message && data.message.indexOf('登出') >= 0) {
+        else if (data.message && data.message.indexOf('鐧诲嚭') >= 0) {
             currentUser.userId = null;
             currentUser.nickname = '未登录';
             currentUser.preferences = {};
@@ -572,7 +574,7 @@ function handleCommandResponse(raw) {
             DOM.ucPwdMsg.style.color = 'var(--accent-green)';
             addLog('success', data.message);
         }
-        // 障碍物/通用命令响应
+        // 障碍物通用命令响应
         else if (raw.message) {
             addLog('success', raw.message);
         }
@@ -582,7 +584,7 @@ function handleCommandResponse(raw) {
     } else {
         addLog('error', raw.error || '操作失败');
         DOM.loginBtn.disabled = false;
-        DOM.loginBtn.textContent = '登 录 / 注 册';
+        DOM.loginBtn.textContent = '登录 / 注册';
         DOM.loginError.textContent = raw.error || '操作失败';
         // 密码修改失败
         if (raw.error && (raw.error.indexOf('密码') >= 0 || raw.error.indexOf('登录') >= 0)) {
@@ -631,7 +633,7 @@ function makeCarSnapshot() {
     return parts.join(';;');
 }
 
-// ---- 机器人状态卡片 ----
+// ---- 机器人状态卡片----
 function updateRobotCards() {
     var container = DOM.robotCardsContainer;
     if (!container) return;
@@ -659,11 +661,11 @@ function updateRobotCards() {
         html += '<span class="status-badge ' + statusClass + '">' + statusText + '</span>';
         html += '</div>';
         html += '<div class="robot-card-info">';
-        html += '<div class="info-item"><span class="info-label">位置</span><span class="info-value">(' + car.position.x + ', ' + car.position.y + ')</span></div>';
-        html += '<div class="info-item"><span class="info-label">步数</span><span class="info-value">' + (car.stepsWalked || 0) + '</span></div>';
+        html += '<div class="info-item"><span class="info-label">浣嶇疆</span><span class="info-value">(' + car.position.x + ', ' + car.position.y + ')</span></div>';
+        html += '<div class="info-item"><span class="info-label">姝ユ暟</span><span class="info-value">' + (car.stepsWalked || 0) + '</span></div>';
         html += '</div>';
         if (car.target && car.target.x !== undefined) {
-            html += '<div class="robot-card-target">目标: (' + car.target.x + ', ' + car.target.y + ')</div>';
+            html += '<div class="robot-card-target">鐩爣: (' + car.target.x + ', ' + car.target.y + ')</div>';
         }
         html += '<div class="battery-bar"><div class="battery-fill ' + batteryClass + '" style="width:' + battery + '%;"></div></div>';
         html += '</div>';
@@ -671,7 +673,7 @@ function updateRobotCards() {
     container.innerHTML = html;
 }
 
-// ---- 步数统计 ----
+// ----步数统计----
 function updateStepsStats() {
     var container = DOM.stepsStatsContainer;
     if (!container) return;
@@ -726,13 +728,13 @@ function updateSystemInfo() {
     if (DOM.sysInfoCoverage) DOM.sysInfoCoverage.textContent = state.exploredPercent + '%';
 }
 
-// ---- 趋势图 ----
+// ----趋势图----
 function updateTrendChart() {
-    if (DOM.chartCoverageValue) DOM.chartCoverageValue.textContent = '覆盖率: ' + state.exploredPercent + '%';
+    if (DOM.chartCoverageValue) DOM.chartCoverageValue.textContent = '覆盖率 ' + state.exploredPercent + '%';
     drawTrendChart();
 }
 
-// ---- 底部状态栏 ----
+// ---- 底部状态栏----
 function updateStatusBar() {
     if (DOM.statCoverage) DOM.statCoverage.textContent = state.exploredPercent + '%';
     var totalSteps = 0;
@@ -765,7 +767,7 @@ function getStatusText(status) {
     return map[status] || status || '未知';
 }
 
-// ==================== 事件处理 ====================
+// ====================事件处理 ====================
 
 function wireEvents() {
     // 导航标签切换
@@ -816,33 +818,20 @@ function wireEvents() {
 
     DOM.btnStart.addEventListener('click', function () {
         if (wsConnected) {
-            var robotCount = parseInt(DOM.robotCount.value, 10);
-            var mapWidth = parseInt(DOM.mapWidth.value, 10);
-            var mapHeight = parseInt(DOM.mapHeight.value, 10);
-            var density = parseInt(DOM.obstacleDensity.value, 10);
-            var params = {
-                robotCount: Number.isNaN(robotCount) ? 5 : robotCount,
-                carCount: Number.isNaN(robotCount) ? 5 : robotCount,
-                mapWidth: Number.isNaN(mapWidth) ? 26 : mapWidth,
-                mapHeight: Number.isNaN(mapHeight) ? 16 : mapHeight,
-                density: Number.isNaN(density) ? 5 : density,
-                obstacleDensity: Number.isNaN(density) ? 5 : density,
-                algorithm: document.querySelector('input[name="algorithm"]:checked')?.value || 'BFS'
-            };
-            state.mapWidth = params.mapWidth;
-            state.mapHeight = params.mapHeight;
-            recalcMapLayout();
             state.status = STATUS_RUNNING;
             state.startTimestamp = Date.now();
             state.elapsedMs = 0;
-            sendCommand('SET_CONFIG', params);
             sendCommand('START');
-            addLog('success', '仿真已启动（' + params.robotCount + '辆, ' + params.mapWidth + '×' + params.mapHeight + '）');
+            addLog('success', '仿真已启动（不会重新初始化地图、障碍物或小车）');
         } else {
             addLog('warn', 'WebSocket 未连接，无法启动仿真');
         }
         updateControlButtons(); updateStatusBar(); updateSystemInfo();
     });
+
+    if (DOM.btnApplyConfig) {
+        DOM.btnApplyConfig.addEventListener('click', applySimulationConfig);
+    }
 
     DOM.btnPause.addEventListener('click', function () {
         state.status = STATUS_PAUSED;
@@ -886,6 +875,11 @@ function wireEvents() {
         }
         updateStatistics(); updateSystemInfo();
     });
+
+    if (DOM.btnRandomCars) {
+        DOM.btnRandomCars.addEventListener('click', addRandomCars);
+    }
+
     DOM.btnClearObs.addEventListener('click', function () {
         if (wsConnected) {
             sendCommand('CLEAR_OBSTACLE');
@@ -921,7 +915,7 @@ function wireEvents() {
                 setMapBackground(img);
                 DOM.imageFileName.textContent = file.name;
                 DOM.mapImageInfo.style.display = 'flex';
-                addLog('success', '已加载地图背景: ' + file.name + ' (' + img.width + '×' + img.height + 'px)');
+                addLog('success', '已加载地图背景 ' + file.name + ' (' + img.width + '×' + img.height + 'px)');
                 // 用图片尺寸更新地图宽高
                 // 不强制更新，保持用户设置；图片会自动拉伸填充网格区域
             };
@@ -937,7 +931,7 @@ function wireEvents() {
         addLog('info', '已移除地图背景');
     });
 
-    // 画布悬停
+    //画布悬停
     DOM.mapCanvas.addEventListener('mousemove', function (e) {
         var rect = DOM.mapCanvas.getBoundingClientRect();
         var cell = getCellAt(DOM.mapCanvas, e.clientX - rect.left, e.clientY - rect.top, layout, state.mapWidth, state.mapHeight);
@@ -967,7 +961,7 @@ function wireEvents() {
         if (!cell) return;
         var idx = cell.row * state.mapWidth + cell.col;
 
-        // 模式1：小车部署
+        // 小车部署
         if (DOM.carPlaceToggle.checked) {
             if (e.ctrlKey || e.metaKey) {
                 // Ctrl+点击 → 移除小车
@@ -1034,7 +1028,7 @@ function doLogin() {
         return;
     }
     if (password.length < 6) {
-        DOM.loginError.textContent = '密码至少需要6位';
+        DOM.loginError.textContent = '密码至少需要 6 位';
         return;
     }
     if (!wsConnected) {
@@ -1126,7 +1120,7 @@ function renderPreferences() {
         html += '<div class="uc-pref-item">';
         html += '<span class="uc-pref-key">' + escapeHtml(k) + '</span>';
         html += '<span class="uc-pref-value">' + escapeHtml(String(currentUser.preferences[k])) + '</span>';
-        html += '<button class="uc-pref-remove" data-key="' + escapeHtml(k) + '" title="删除">✕</button>';
+        html += '<button class="uc-pref-remove" data-key="' + escapeHtml(k) + '" title="删除">×</button>';
         html += '</div>';
     });
     DOM.ucPrefsContainer.innerHTML = html;
@@ -1180,6 +1174,15 @@ var replayPlaying = false;
 var replayInterval = null;
 var replayFrameIdx = 0;
 var replayLayout = null;
+var REPLAY_API_BASE = window.location.protocol + '//' + window.location.hostname + ':8084/api/replay';
+var REPLAY_CHUNK_SIZE = 200;
+var REPLAY_PREFETCH_THRESHOLD = 40;
+var replaySessionId = '';
+var replaySessionMode = 'current';
+var replayNextFromTick = 0;
+var replayLoadingChunk = false;
+var replayReachedEnd = false;
+var replayLoadToken = 0;
 
 function showReplayPanel() {
     DOM.replayPanel.style.display = 'flex';
@@ -1191,15 +1194,43 @@ function showReplayPanel() {
 function refreshReplaySessions() {
     var sel = DOM.replaySessionSelect;
     sel.innerHTML = '<option value="">-- 选择会话 --</option>';
-    fetch('http://localhost:8084/api/replay/sessions?page=0&size=20')
-        .then(r => r.json())
-        .then(data => {
-            data.data.forEach(function(s) {
-                var label = new Date(s.startTime).toLocaleString()
-                    + ' | ' + (s.endTime ? '已结束' : '进行中');
-                sel.innerHTML += '<option value="' + s.sessionId + '">' + label + '</option>';
+    sel.innerHTML += '<option value="current">当前会话（Redis 实时快照）</option>';
+
+    fetch(REPLAY_API_BASE + '/sessions?page=0&size=20')
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+            var sessions = data.data || [];
+            sessions.forEach(function (s) {
+                var label = formatReplaySessionLabel(s);
+                sel.innerHTML += '<option value="' + escapeHtml(s.sessionId) + '">' + escapeHtml(label) + '</option>';
             });
+        })
+        .catch(function () {
+            addLog('warn', '未连接到回放服务 8084，仅可尝试当前会话快照');
         });
+}
+
+function formatReplaySessionLabel(session) {
+    var id = (session.sessionId || '').slice(0, 8);
+    var started = session.startTime ? formatDateTime(session.startTime) : id;
+    var cars = (session.carCount || 0) + '车';
+    var duration = session.endTime ? formatDuration(session.endTime - session.startTime) : '进行中';
+    return started + ' · ' + cars + ' · ' + duration;
+}
+
+function formatDateTime(ms) {
+    var d = new Date(ms);
+    var pad = function (n) { return String(n).padStart(2, '0'); };
+    return pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+
+function formatDuration(ms) {
+    ms = Math.max(0, ms || 0);
+    var seconds = Math.floor(ms / 1000);
+    var minutes = Math.floor(seconds / 60);
+    seconds = seconds % 60;
+    if (minutes <= 0) return seconds + '秒';
+    return minutes + '分' + seconds + '秒';
 }
 
 function initReplayCanvas() {
@@ -1232,23 +1263,171 @@ function initReplayEvents() {
 }
 
 function loadReplaySession(sessionId) {
-    if (!sessionId) return;
+    replayLoadToken++;
+    if (!sessionId) { replaySnapshots = []; replayFrameIdx = 0; updateReplayFrame(); return; }
     stopReplay();
-    fetch('http://localhost:8084/api/replay/sessions/' + sessionId + '/snapshots')
-        .then(r => r.json())
-        .then(data => {
-            replaySnapshots = data.snapshots.map(function(s) {
-                var st = JSON.parse(s.stateJson);
-                return { tick: s.tick, coverage: s.coverage * 100, ...st };
-            });
+    var token = replayLoadToken;
+    replaySnapshots = [];
+    replayFrameIdx = 0;
+    replaySessionId = sessionId;
+    replaySessionMode = sessionId === 'current' ? 'current' : 'history';
+    replayNextFromTick = 0;
+    replayLoadingChunk = false;
+    replayReachedEnd = false;
+    updateReplayFrame();
+
+    if (replaySessionMode === 'history') {
+        loadReplayChunk(0, token);
+        return;
+    }
+
+    fetch(REPLAY_API_BASE + '/current/snapshots')
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+            if (token !== replayLoadToken || replaySessionId !== sessionId) return;
+            var rawSnapshots = data.snapshots || [];
+            var snaps = rawSnapshots.map(normalizeReplaySnapshot).filter(Boolean);
+            if (snaps.length === 0) {
+                addLog('warn', '暂无可用回放快照，请确认 replay-logger 在仿真开始前已启动');
+                replaySnapshots = [];
+                replayFrameIdx = 0;
+                updateReplayFrame();
+                return;
+            }
+            replaySnapshots = snaps.sort(compareReplaySnapshots);
             replayFrameIdx = 0;
             updateReplayFrame();
-            addLog('success', '已加载 ' + replaySnapshots.length + ' 帧');
+            addLog('success', '已加载 ' + snaps.length + ' 帧真实回放快照');
+        })
+        .catch(function (err) {
+            if (token !== replayLoadToken || replaySessionId !== sessionId) return;
+            addLog('error', '加载回放失败：' + err.message);
         });
 }
 
+function loadReplayChunk(fromTick, token) {
+    if (replaySessionMode !== 'history' || !replaySessionId || replayLoadingChunk || replayReachedEnd) return;
+    token = token || replayLoadToken;
+    replayLoadingChunk = true;
+    var requestedSessionId = replaySessionId;
+
+    var toTick = fromTick + REPLAY_CHUNK_SIZE - 1;
+    var url = REPLAY_API_BASE
+        + '/sessions/' + encodeURIComponent(requestedSessionId)
+        + '/snapshots?from=' + encodeURIComponent(fromTick)
+        + '&to=' + encodeURIComponent(toTick);
+
+    fetch(url)
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+            if (token !== replayLoadToken || requestedSessionId !== replaySessionId) return;
+            var rawSnapshots = data.snapshots || [];
+            var snaps = rawSnapshots.map(normalizeReplaySnapshot).filter(Boolean);
+            appendReplaySnapshots(snaps);
+
+            if (snaps.length === 0) {
+                replayReachedEnd = true;
+                if (replaySnapshots.length === 0) {
+                    addLog('warn', '暂无可用回放快照，请确认 replay-logger 在仿真开始前已启动');
+                    updateReplayFrame();
+                }
+                return;
+            }
+
+            replayNextFromTick = getLastReplayTick() + 1;
+
+            if (replaySnapshots.length === snaps.length) {
+                replayFrameIdx = 0;
+                updateReplayFrame();
+                addLog('success', '已加载历史回放首段 ' + snaps.length + ' 帧，后续将边播边加载');
+            } else {
+                addLog('info', '已追加回放帧至 tick ' + getLastReplayTick());
+            }
+        })
+        .catch(function (err) {
+            if (token !== replayLoadToken || requestedSessionId !== replaySessionId) return;
+            addLog('error', '加载回放分段失败：' + err.message);
+        })
+        .finally(function () {
+            if (token === replayLoadToken && requestedSessionId === replaySessionId) {
+                replayLoadingChunk = false;
+            }
+        });
+}
+
+function appendReplaySnapshots(snaps) {
+    if (!snaps || snaps.length === 0) return;
+    var seen = {};
+    replaySnapshots.forEach(function (s) { seen[String(s.tick)] = true; });
+    snaps.forEach(function (s) {
+        var key = String(s.tick);
+        if (!seen[key]) {
+            replaySnapshots.push(s);
+            seen[key] = true;
+        }
+    });
+    replaySnapshots.sort(compareReplaySnapshots);
+}
+
+function getLastReplayTick() {
+    if (replaySnapshots.length === 0) return 0;
+    return replaySnapshots[replaySnapshots.length - 1].tick || 0;
+}
+
+function compareReplaySnapshots(a, b) {
+    return (a.tick || 0) - (b.tick || 0);
+}
+
+function ensureReplayBuffer() {
+    if (replaySessionMode !== 'history' || replayReachedEnd || replayLoadingChunk) return;
+    if (replaySnapshots.length - replayFrameIdx <= REPLAY_PREFETCH_THRESHOLD) {
+        loadReplayChunk(replayNextFromTick, replayLoadToken);
+    }
+}
+
+function normalizeReplaySnapshot(item) {
+    if (!item) return null;
+
+    var rawState = item.stateJson || item.state_json || item;
+    if (typeof rawState === 'string') {
+        try {
+            rawState = JSON.parse(rawState);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    var cars = {};
+    if (rawState.cars) {
+        if (Array.isArray(rawState.cars)) {
+            rawState.cars.forEach(function (c, i) {
+                var cid = c.id || c.carId || ('Car' + String(i + 1).padStart(3, '0'));
+                cars[cid] = buildCarInfo(cid, c);
+            });
+        } else {
+            Object.keys(rawState.cars).forEach(function (cid) {
+                cars[cid] = buildCarInfo(cid, rawState.cars[cid]);
+            });
+        }
+    }
+
+    return {
+        tick: rawState.tick !== undefined ? rawState.tick : item.tick,
+        coverage: rawState.exploredPercent !== undefined
+            ? rawState.exploredPercent
+            : ((item.coverage || 0) <= 1 ? (item.coverage || 0) * 100 : item.coverage || 0),
+        mapWidth: rawState.mapWidth || state.mapWidth || 26,
+        mapHeight: rawState.mapHeight || state.mapHeight || 16,
+        mapView: rawState.mapView || state.mapView,
+        staticBlock: rawState.staticBlock || state.staticBlock,
+        dynamicBlock: rawState.dynamicBlock || [],
+        cars: cars
+    };
+}
+
 function startReplay() {
-    if (replaySnapshots.length === 0) { addLog('warn', '请先选择会话'); return; }
+    if (replayLoadingChunk && replaySnapshots.length === 0) { addLog('warn', '回放正在加载，请稍后'); return; }
+    if (replaySnapshots.length === 0) { addLog('warn', '璇峰厛閫夋嫨浼氳瘽'); return; }
     if (replayFrameIdx >= replaySnapshots.length - 1) replayFrameIdx = 0;
     replayPlaying = true;
     DOM.replayBtnPlay.disabled = true;
@@ -1277,9 +1456,21 @@ function stopReplay() {
 
 function replaySeek(delta) {
     if (replaySnapshots.length === 0) return;
+    if (delta > 0 && replayFrameIdx >= replaySnapshots.length - 1) {
+        ensureReplayBuffer();
+        if (replayReachedEnd && !replayLoadingChunk) {
+            pauseReplay();
+            DOM.replayBtnStop.disabled = false;
+        }
+        return;
+    }
     replayFrameIdx = Math.max(0, Math.min(replaySnapshots.length - 1, replayFrameIdx + delta));
     updateReplayFrame();
-    if (replayFrameIdx >= replaySnapshots.length - 1) stopReplay();
+    ensureReplayBuffer();
+    if (replayFrameIdx >= replaySnapshots.length - 1 && replayReachedEnd) {
+        pauseReplay();
+        DOM.replayBtnStop.disabled = false;
+    }
 }
 
 function updateReplayFrame() {
@@ -1287,7 +1478,8 @@ function updateReplayFrame() {
         DOM.replayFrameInfo.textContent = '0/0';
         return;
     }
-    DOM.replayFrameInfo.textContent = (replayFrameIdx + 1) + '/' + replaySnapshots.length;
+    DOM.replayFrameInfo.textContent = (replayFrameIdx + 1) + '/' + replaySnapshots.length
+        + (replaySessionMode === 'history' && !replayReachedEnd ? '+' : '');
     var frame = replaySnapshots[replayFrameIdx];
     DOM.replayCoverage.textContent = (frame.coverage || 0).toFixed(1) + '%';
     DOM.replayTick.textContent = frame.tick || 0;
@@ -1309,14 +1501,15 @@ function updateReplayFrame() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     var simState = {
-        mapWidth: state.mapWidth || 26,
-        mapHeight: state.mapHeight || 16,
-        mapView: state.mapView,
+        mapWidth: frame.mapWidth || state.mapWidth || 26,
+        mapHeight: frame.mapHeight || state.mapHeight || 16,
+        mapView: frame.mapView || state.mapView,
         staticBlock: frame.staticBlock || state.staticBlock,
-        dynamicBlock: state.dynamicBlock,
+        dynamicBlock: frame.dynamicBlock || state.dynamicBlock,
         exploredPercent: frame.coverage || 0,
         cars: frame.cars || {}
     };
+    replayLayout = calcLayout(canvas.clientWidth || canvas.width / dpr, canvas.clientHeight || canvas.height / dpr, simState.mapWidth, simState.mapHeight);
     renderAll(canvas, simState, replayLayout);
 }
 
@@ -1353,6 +1546,54 @@ function loadSettings() {
         if (saved) { var parsed = JSON.parse(saved); return Object.assign({}, defaultSettings, parsed); }
     } catch (e) {}
     return Object.assign({}, defaultSettings);
+}
+
+function buildConfigParams() {
+    var robotCount = parseInt(DOM.robotCount.value, 10);
+    var mapWidth = parseInt(DOM.mapWidth.value, 10);
+    var mapHeight = parseInt(DOM.mapHeight.value, 10);
+    var density = parseInt(DOM.obstacleDensity.value, 10);
+    return {
+        robotCount: Number.isNaN(robotCount) ? 5 : robotCount,
+        carCount: Number.isNaN(robotCount) ? 5 : robotCount,
+        mapWidth: Number.isNaN(mapWidth) ? 26 : mapWidth,
+        mapHeight: Number.isNaN(mapHeight) ? 16 : mapHeight,
+        density: Number.isNaN(density) ? 5 : density,
+        obstacleDensity: Number.isNaN(density) ? 5 : density,
+        algorithm: document.querySelector('input[name="algorithm"]:checked')?.value || 'BFS'
+    };
+}
+
+function applySimulationConfig() {
+    if (!wsConnected) {
+        addLog('warn', 'WebSocket 未连接，无法应用地图配置');
+        return;
+    }
+    var params = buildConfigParams();
+    state.mapWidth = params.mapWidth;
+    state.mapHeight = params.mapHeight;
+    state.tick = 0;
+    state.elapsedMs = 0;
+    state.exploredPercent = 0;
+    state.status = STATUS_IDLE;
+    state.startTimestamp = null;
+    state.cars = {};
+    state.mapView = [];
+    state.dynamicBlock = [];
+    state.staticBlock = [];
+    state.obstacleCount = 0;
+    state.connectedRobots = 0;
+    _trendData = [];
+    _lastCarSnapshot = '';
+    _lastStepsSnapshot = '';
+    clearRobotColorCache();
+    recalcMapLayout();
+    sendCommand('SET_CONFIG', params);
+    addLog('success', '已应用地图配置（' + params.mapWidth + '×' + params.mapHeight + '，预设小车 ' + params.robotCount + ' 辆）');
+    updateControlButtons();
+    updateUI();
+    updateStatusBar();
+    updateSystemInfo();
 }
 
 function saveSettings() {
@@ -1396,7 +1637,7 @@ function initPasswordEvents() {
         var newPwd = DOM.ucNewPwd.value;
         var newPwd2 = DOM.ucNewPwd2.value;
         if (!oldPwd) { DOM.ucPwdMsg.textContent = '请输入当前密码'; return; }
-        if (!newPwd || newPwd.length < 6) { DOM.ucPwdMsg.textContent = '新密码至少6位'; return; }
+        if (!newPwd || newPwd.length < 6) { DOM.ucPwdMsg.textContent = '新密码至少 6 位'; return; }
         if (newPwd !== newPwd2) { DOM.ucPwdMsg.textContent = '两次密码不一致'; return; }
         if (!wsConnected) { DOM.ucPwdMsg.textContent = 'WebSocket 未连接'; return; }
         sendCommand('CHANGE_PASSWORD', { oldPassword: oldPwd, newPassword: newPwd });
@@ -1419,6 +1660,7 @@ function applySettingsToUI() {
 // ==================== 小车手动部署 ====================
 
 function addCarAt(col, row) {
+    ensureMapArrays();
     // 检查数量上限
     var maxCars = parseInt(DOM.robotCount.value) || 5;
     var currentCount = Object.keys(state.cars).length;
@@ -1427,8 +1669,8 @@ function addCarAt(col, row) {
         return;
     }
     var idx = row * state.mapWidth + col;
-    // 不能放在障碍物上
-    if (state.staticBlock[idx]) { addLog('warn', '不能放在障碍物上 (' + col + ', ' + row + ')'); return; }
+    // 不能放在障碍物或动态占用上
+    if (state.staticBlock[idx] || state.dynamicBlock[idx]) { addLog('warn', '不能放在障碍物或已占用格上 (' + col + ', ' + row + ')'); return; }
     // 不能放在已有小车上
     var carExists = false;
     Object.keys(state.cars).forEach(function (cid) {
@@ -1455,6 +1697,7 @@ function addCarAt(col, row) {
         battery: 100
     };
     state.connectedRobots = Object.keys(state.cars).length;
+    state.dynamicBlock[idx] = true;
     stateDirty = true;
     _lastCarSnapshot = '';
     _lastStepsSnapshot = '';
@@ -1467,22 +1710,107 @@ function addCarAt(col, row) {
     }
 }
 
+function addRandomCars() {
+    if (!wsConnected) {
+        addLog('warn', 'WebSocket 未连接，无法随机部署小车');
+        return;
+    }
+
+    var targetCount = parseInt(DOM.robotCount.value, 10);
+    if (Number.isNaN(targetCount) || targetCount <= 0) targetCount = 1;
+
+    ensureMapArrays();
+    var existing = Object.keys(state.cars).length;
+    var toAdd = Math.max(0, targetCount - existing);
+    if (toAdd === 0) {
+        addLog('info', '当前小车数量已达到设置值，无需随机添加');
+        return;
+    }
+
+    var added = 0;
+    var attempts = 0;
+    var maxAttempts = Math.max(100, state.mapWidth * state.mapHeight * 3);
+    while (added < toAdd && attempts < maxAttempts) {
+        attempts++;
+        var col = Math.floor(Math.random() * state.mapWidth);
+        var row = Math.floor(Math.random() * state.mapHeight);
+        if (!isFreeForCar(col, row)) continue;
+
+        var carId = nextCarId();
+        state.cars[carId] = {
+            carId: carId,
+            position: { x: col, y: row },
+            target: null,
+            routeList: [],
+            status: 'IDLE',
+            stepsWalked: 0,
+            battery: 100
+        };
+        state.dynamicBlock[row * state.mapWidth + col] = true;
+        sendCommand('ADD_CAR', { carId: carId, row: row, col: col });
+        added++;
+    }
+
+    if (added > 0) {
+        state.connectedRobots = Object.keys(state.cars).length;
+        stateDirty = true;
+        _lastCarSnapshot = '';
+        _lastStepsSnapshot = '';
+        addLog('success', '已随机部署 ' + added + ' 辆小车');
+        updateRobotCards();
+        updateStepsStats();
+        updateStatistics();
+        updateSystemInfo();
+    } else {
+        addLog('warn', '没有找到可放置小车的空格，请先清除部分障碍物');
+    }
+}
+
+function ensureMapArrays() {
+    var size = (state.mapWidth || 26) * (state.mapHeight || 16);
+    if (!Array.isArray(state.staticBlock) || state.staticBlock.length !== size) state.staticBlock = new Array(size).fill(false);
+    if (!Array.isArray(state.dynamicBlock) || state.dynamicBlock.length !== size) state.dynamicBlock = new Array(size).fill(false);
+    if (!Array.isArray(state.mapView) || state.mapView.length !== size) state.mapView = new Array(size).fill(false);
+}
+
+function isFreeForCar(col, row) {
+    if (col < 0 || col >= state.mapWidth || row < 0 || row >= state.mapHeight) return false;
+    var idx = row * state.mapWidth + col;
+    if (state.staticBlock[idx] || state.dynamicBlock[idx]) return false;
+    return !Object.keys(state.cars).some(function (cid) {
+        var p = state.cars[cid].position;
+        return p && p.x === col && p.y === row;
+    });
+}
+
+function nextCarId() {
+    var n = 1;
+    var carId = 'Car' + String(n).padStart(3, '0');
+    while (state.cars[carId]) {
+        n++;
+        carId = 'Car' + String(n).padStart(3, '0');
+    }
+    return carId;
+}
+
 function removeCarAt(col, row) {
     var found = null;
     Object.keys(state.cars).forEach(function (cid) {
         var c = state.cars[cid];
         if (c.position.x === col && c.position.y === row) found = cid;
     });
-    if (!found) { addLog('warn', '该位置没有小车 (' + col + ', ' + row + ')'); return; }
+    if (!found) { addLog('warn', '该位置没有小车(' + col + ', ' + row + ')'); return; }
     var removed = state.cars[found];
     delete state.cars[found];
+    ensureMapArrays();
+    state.dynamicBlock[row * state.mapWidth + col] = false;
     state.connectedRobots = Object.keys(state.cars).length;
     stateDirty = true;
     _lastCarSnapshot = '';
     _lastStepsSnapshot = '';
     updateRobotCards();
     updateStepsStats();
-    addLog('info', '已移除小车 ' + found + ' 位置 (' + col + ', ' + row + ')');
+    addLog('info', '已移除小车' + found + ' 位置 (' + col + ', ' + row + ')');
     if (wsConnected) {
         sendCommand('REMOVE_CAR', { carId: found });
     }

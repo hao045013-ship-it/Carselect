@@ -10,6 +10,7 @@ server:
   port: 8083
 
 sqlserver:
-  url: jdbc:sqlserver://LAPTOP-LTTJ001U;databaseName=ExplorationDB;encrypt=false;trustServerCertificate=true
+  url: jdbc:sqlserver://127.0.0.1:1433;databaseName=ExplorationDB;encrypt=true;trustServerCertificate=true;characterEncoding=UTF-8
   username: sa
-  password: yxy450716
+  password: Chen12345678
+

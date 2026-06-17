@@ -94,6 +94,7 @@ public class MQKeys {
     public static final String CMD_PAUSE = "PAUSE";
     public static final String CMD_RESUME = "RESUME";
     public static final String CMD_RESET = "RESET";
+    //新增
 
     private MQKeys() {
     }

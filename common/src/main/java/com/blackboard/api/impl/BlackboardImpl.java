@@ -505,7 +505,7 @@ public class BlackboardImpl implements Blackboard {
     @Override
     public void saveSnapshot(String json) {
         try (Jedis jedis = getJedis()) {
-            jedis.lpush(RedisKeys.REPLAY_SNAPSHOTS, json);
+            jedis.rpush(RedisKeys.REPLAY_SNAPSHOTS, json);
         }
     }
 
@@ -623,10 +623,25 @@ public class BlackboardImpl implements Blackboard {
 
     // ==================== 原子移动（重要修改） ====================
     @Override
-    public void atomicMove(String carId, int oldX, int oldY, int newX, int newY, int visionRadius) {
+    public boolean atomicMove(String carId, int oldX, int oldY, int newX, int newY, int visionRadius) {
         try (Jedis jedis = getJedis()) {
             int width = getWidth(jedis);
             int height = getHeight(jedis);
+            int oldIndex = index(oldY, oldX, width);
+            int newIndex = index(newY, newX, width);
+
+            jedis.watch(RedisKeys.DYNAMIC_BLOCK, RedisKeys.STATIC_BLOCK, RedisKeys.positionKey(carId));
+            Map<String, String> currentPosition = jedis.hgetAll(RedisKeys.positionKey(carId));
+            boolean positionChanged = currentPosition == null
+                    || !String.valueOf(oldX).equals(currentPosition.get("x"))
+                    || !String.valueOf(oldY).equals(currentPosition.get("y"));
+            boolean targetBlocked = jedis.getbit(RedisKeys.STATIC_BLOCK, newIndex)
+                    || (newIndex != oldIndex && jedis.getbit(RedisKeys.DYNAMIC_BLOCK, newIndex));
+            if (positionChanged || targetBlocked) {
+                jedis.unwatch();
+                return false;
+            }
+
             Transaction t = jedis.multi();
 
             // 更新位置
@@ -634,9 +649,11 @@ public class BlackboardImpl implements Blackboard {
             t.hset(RedisKeys.positionKey(carId), "y", String.valueOf(newY));
 
             // 旧位置清除动态障碍（车辆占位）
-            t.setbit(RedisKeys.DYNAMIC_BLOCK, index(oldY, oldX, width), false);
+            if (newIndex != oldIndex) {
+                t.setbit(RedisKeys.DYNAMIC_BLOCK, oldIndex, false);
             // 新位置设置动态障碍
-            t.setbit(RedisKeys.DYNAMIC_BLOCK, index(newY, newX, width), true);
+                t.setbit(RedisKeys.DYNAMIC_BLOCK, newIndex, true);
+            }
 
             // 点亮视野范围（使用 MAP_VIEW）
             for (int dr = -visionRadius; dr <= visionRadius; dr++) {
@@ -649,7 +666,7 @@ public class BlackboardImpl implements Blackboard {
                 }
             }
             t.incr(RedisKeys.stepsKey(carId));
-            t.exec();
+            return t.exec() != null;
         }
     }
 

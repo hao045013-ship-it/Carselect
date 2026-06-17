@@ -74,11 +74,15 @@ public class CarAgent {
         board.setStatus(carId, CarStatus.MOVING.name());
 
         // 消费路径中的下一步
+        boolean moved = board.atomicMove(carId, oldX, oldY, newX, newY, RedisKeys.VISION_RANGE);
+        if (!moved) {
+            handleBlocked(oldX, oldY, newX, newY);
+            return;
+        }
+
         board.popRoute(carId);
 
         // 原子移动：更新位置、dynamicBlock、mapView、steps
-        board.atomicMove(carId, oldX, oldY, newX, newY, RedisKeys.VISION_RANGE);
-
         long tick = board.getCurrentTick();
         board.appendTrace(carId, tick, newX, newY);
 
@@ -95,7 +99,7 @@ public class CarAgent {
 
     private void handleBlocked(int oldX, int oldY, int blockedX, int blockedY) {
         long tick = board.getCurrentTick();
-
+        board.exploreCell(blockedY, blockedX);
         board.clearRoute(carId);
         board.setBlockedTick(carId, tick);
         board.incrementBlockedCount(carId);

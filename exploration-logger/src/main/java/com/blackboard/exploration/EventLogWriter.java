@@ -65,9 +65,8 @@ public class EventLogWriter {
         }
 
         if (MQKeys.CMD_START.equals(cmd)) {
-            currentSessionId = UUID.randomUUID().toString();
-            int carCount = board.getOnlineCars().size();
-            sqlPersistence.startSession(currentSessionId, timestamp, carCount);
+            currentSessionId = data == null ? null : data.getString("sessionId");
+
             return;
         }
 

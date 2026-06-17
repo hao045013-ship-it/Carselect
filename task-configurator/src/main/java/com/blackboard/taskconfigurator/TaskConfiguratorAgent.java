@@ -59,17 +59,22 @@ public class TaskConfiguratorAgent {
         config.put("carCount", String.valueOf(carCount));
         config.put("obstacleDensity", String.valueOf(obstacleDensity));
         config.put("algorithm", algorithm);
-        config.put("taskStatus", TaskStatus.RUNNING.name());
+        config.put("taskStatus", TaskStatus.INIT.name());
 
         board.setTaskConfig(config);
         board.setCurrentTick(0L);
 
-        board.randomStaticBlocks(obstacleDensity / 100.0);
+        boolean generateObstacles = data.getBooleanValue("generateObstacles");
+        if (generateObstacles) {
+            board.randomStaticBlocks(obstacleDensity / 100.0);
+        } else {
+            board.clearStaticBlocks();
+        }
 
         JSONArray cars = data.getJSONArray("cars");
         if (cars != null && !cars.isEmpty()) {
             initCarsFromConfig(cars);
-        } else {
+        } else if (data.getBooleanValue("generateDefaultCars")) {
             initDefaultCars(carCount, mapWidth, mapHeight);
         }
 

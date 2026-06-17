@@ -5,15 +5,22 @@ import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.blackboard.api.Blackboard;
 import com.blackboard.api.MessageQueue;
+import com.blackboard.api.impl.MessageQueueImpl;
 import com.blackboard.constant.MQKeys;
 import com.blackboard.constant.RedisKeys;
 import com.blackboard.model.CarStatus;
 import com.blackboard.model.TaskStatus;
+import com.blackboard.model.CarStatus;
+import com.blackboard.model.Position;
+import com.blackboard.model.SimState;
+import com.blackboard.model.TaskStatus;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.*;
 import java.util.concurrent.*;
 
 public class ControllerAgent {
@@ -25,6 +32,7 @@ public class ControllerAgent {
             Executors.newSingleThreadScheduledExecutor();
 
     private volatile boolean started = false;
+    private String currentSessionId;
 
     public ControllerAgent(Blackboard board, MessageQueue mq) {
         this.board = board;
@@ -189,6 +197,7 @@ public class ControllerAgent {
 
     private void handleSetConfig(JSONObject data) {
         Map<String, Object> map = jsonObjectToMap(data);
+        purgeSimulationCommandQueues(data == null ? 0 : data.getIntValue("carCount", data.getIntValue("robotCount", 0)));
 
         mq.sendToQueue(
                 MQKeys.TASK_CONFIG_CMD,
@@ -200,6 +209,7 @@ public class ControllerAgent {
     }
 
     private void handleReset() {
+        purgeSimulationCommandQueues(board.getCarList().size());
         mq.sendToQueue(
                 MQKeys.TASK_CONFIG_CMD,
                 MQKeys.CMD_FORWARD_RESET,
@@ -210,18 +220,111 @@ public class ControllerAgent {
         mq.broadcastEvent(MQKeys.CMD_RESET, Collections.emptyMap());
     }
 
+    private void purgeSimulationCommandQueues(int carCount) {
+        if (mq instanceof MessageQueueImpl) {
+            ((MessageQueueImpl) mq).purgeSimulationCommandQueues(Math.max(carCount, board.getCarList().size()));
+        }
+    }
+
     private void handleStart() {
+        purgeSimulationCommandQueues(board.getCarList().size());
+        // 生成 sessionId
+        currentSessionId = java.util.UUID.randomUUID().toString();
         Map<String, String> config = board.getTaskConfig();
+
         if (config == null) {
             config = new HashMap<>();
         }
+
+        board.setCurrentTick(0L);
+        config.put("taskStatus", TaskStatus.INIT.name());
+        board.setTaskConfig(config);
+
+        //String sessionId = java.util.UUID.randomUUID().toString();
+
+        prepareCarsForStart();
+
+        String initialStateJson = buildStartSnapshotJson();
+
+        Map<String, Object> startData = new HashMap<>();
+        startData.put("tick", 0L);
+        startData.put("sessionId", currentSessionId);
+        startData.put("initialStateJson", initialStateJson);
+
+        mq.broadcastEvent(MQKeys.CMD_START, startData);
+        mq.broadcastRefreshAll(0L);
+
+        waitForRecorders();
 
         config.put("taskStatus", TaskStatus.RUNNING.name());
         board.setTaskConfig(config);
 
         board.addLogEntry("INFO: task started");
-        mq.broadcastEvent(MQKeys.CMD_START, Map.of("tick", board.getCurrentTick()));
-        mq.broadcastRefreshAll(board.getCurrentTick());
+        mq.broadcastRefreshAll(0L);
+    }
+
+    private void prepareCarsForStart() {
+        for (String carId : board.getCarList()) {
+            board.clearRoute(carId);
+            board.clearTarget(carId);
+            board.setStatus(carId, CarStatus.IDLE.name());
+
+            Map<String, String> pos = board.getPosition(carId);
+            if (pos != null && pos.containsKey("x") && pos.containsKey("y")) {
+                int x = Integer.parseInt(pos.get("x"));
+                int y = Integer.parseInt(pos.get("y"));
+                board.appendTrace(carId, 0L, x, y);
+            }
+        }
+    }
+
+    private String buildStartSnapshotJson() {
+        SimState state = new SimState();
+
+        state.setMapWidth(board.getMapWidth());
+        state.setMapHeight(board.getMapHeight());
+        state.setMapView(board.getFullMapView());
+        state.setStaticBlock(board.getFullStaticBlock());
+        state.setDynamicBlock(board.getFullDynamicBlock());
+        state.setExploredPercent(board.getExploredPercent());
+        state.setTick(0L);
+        state.setStatus(TaskStatus.INIT.name());
+
+        Map<String, SimState.CarInfo> cars = new HashMap<>();
+
+        for (String carId : board.getCarList()) {
+            SimState.CarInfo info = new SimState.CarInfo();
+            info.setCarId(carId);
+
+            Map<String, String> pos = board.getPosition(carId);
+            if (pos != null && pos.containsKey("x") && pos.containsKey("y")) {
+                info.setPosition(new Position(
+                        Integer.parseInt(pos.get("x")),
+                        Integer.parseInt(pos.get("y"))
+                ));
+            }
+
+            info.setStatus(CarStatus.IDLE.name());
+            info.setTarget(null);
+            info.setRouteList(new ArrayList<>());
+            info.setStepsWalked(board.getSteps(carId));
+
+            cars.put(carId, info);
+        }
+
+        state.setCars(cars);
+        state.setStatsReport(null);
+        state.setCoverageHistory(null);
+
+        return state.toJson();
+    }
+
+    private void waitForRecorders() {
+        try {
+            Thread.sleep(200L);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private void handlePause() {
@@ -463,17 +566,18 @@ public class ControllerAgent {
         board.setCurrentTick(currentTick);
 
         double coverage = board.getExploredPercent();
-        if (coverage >= 99.9) {
+        if (coverage >= 99.999) {
             config.put("taskStatus", TaskStatus.FINISHED.name());
             board.setTaskConfig(config);
 
             board.addLogEntry("INFO: task finished, coverage=" + coverage);
+            // 广播任务完成事件
+            mq.broadcastEvent(MQKeys.CMD_TASK_FINISHED, Map.of("tick", currentTick));
             mq.broadcastRefreshAll(currentTick);
             return;
         }
 
         List<String> cars = board.getCarList();
-
         for (String carId : cars) {
             dispatchCar(carId, config, currentTick);
         }
