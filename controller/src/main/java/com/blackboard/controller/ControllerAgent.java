@@ -252,7 +252,7 @@ public class ControllerAgent {
         startData.put("initialStateJson", initialStateJson);
 
         mq.broadcastEvent(MQKeys.CMD_START, startData);
-        mq.broadcastRefreshAll(0L);
+        broadcastSnapshot(0L);
 
         waitForRecorders();
 
@@ -260,7 +260,7 @@ public class ControllerAgent {
         board.setTaskConfig(config);
 
         board.addLogEntry("INFO: task started");
-        mq.broadcastRefreshAll(0L);
+        broadcastSnapshot(0L);
     }
 
     private void prepareCarsForStart() {
@@ -338,7 +338,7 @@ public class ControllerAgent {
 
         board.addLogEntry("INFO: task paused");
         mq.broadcastEvent(MQKeys.CMD_PAUSE, Map.of("tick", board.getCurrentTick()));
-        mq.broadcastRefreshAll(board.getCurrentTick());
+        broadcastSnapshot(board.getCurrentTick());
     }
 
     private void handleResume() {
@@ -352,7 +352,7 @@ public class ControllerAgent {
 
         board.addLogEntry("INFO: task resumed");
         mq.broadcastEvent(MQKeys.CMD_RESUME, Map.of("tick", board.getCurrentTick()));
-        mq.broadcastRefreshAll(board.getCurrentTick());
+        broadcastSnapshot(board.getCurrentTick());
     }
 
     private void forwardToObstacleManager(String cmd, JSONObject data) {
@@ -413,7 +413,7 @@ public class ControllerAgent {
         illuminateInitialArea(x, y);
 
         board.addLogEntry("INFO: ADD_CAR success: " + carId + " at (" + x + "," + y + ")");
-        mq.broadcastRefreshAll(board.getCurrentTick());
+        broadcastSnapshot(board.getCurrentTick());
     }
 
     private boolean isInMap(int x, int y) {
@@ -450,7 +450,7 @@ public class ControllerAgent {
                         + ", map=" + mapWidth + "x" + mapHeight
         );
 
-        mq.broadcastRefreshAll(board.getCurrentTick());
+        broadcastSnapshot(board.getCurrentTick());
     }
 
     private void handleTargetAssigned(JSONObject data) {
@@ -558,7 +558,7 @@ public class ControllerAgent {
         long currentTick = board.getCurrentTick();
 
         if (!TaskStatus.RUNNING.name().equals(taskStatus)) {
-            mq.broadcastRefreshAll(currentTick);
+            broadcastSnapshot(currentTick);
             return;
         }
 
@@ -573,7 +573,7 @@ public class ControllerAgent {
             board.addLogEntry("INFO: task finished, coverage=" + coverage);
             // 广播任务完成事件
             mq.broadcastEvent(MQKeys.CMD_TASK_FINISHED, Map.of("tick", currentTick));
-            mq.broadcastRefreshAll(currentTick);
+            broadcastSnapshot(currentTick);
             return;
         }
 
@@ -583,7 +583,7 @@ public class ControllerAgent {
         }
 
         board.saveCoverageHistory(currentTick, coverage);
-        mq.broadcastRefreshAll(currentTick);
+        broadcastSnapshot(currentTick);
     }
 
     private void dispatchCar(String carId, Map<String, String> config, long currentTick) {
@@ -621,6 +621,67 @@ public class ControllerAgent {
     // =========================================================
     // 工具方法
     // =========================================================
+
+    private void broadcastSnapshot(long tick) {
+        SimState snapshot = buildCurrentSnapshot(tick);
+        Map<String, Object> data = new HashMap<>();
+        data.put("tick", tick);
+        data.put("stateJson", snapshot.toJson());
+        mq.broadcastEvent(MQKeys.CMD_REFRESH_ALL, data);
+    }
+
+    private SimState buildCurrentSnapshot(long tick) {
+        SimState state = new SimState();
+        state.setMapWidth(board.getMapWidth());
+        state.setMapHeight(board.getMapHeight());
+        state.setMapView(board.getFullMapView());
+        state.setStaticBlock(board.getFullStaticBlock());
+        state.setDynamicBlock(board.getFullDynamicBlock());
+        state.setExploredPercent(board.getExploredPercent());
+        state.setTick(tick);
+
+        Map<String, String> config = board.getTaskConfig();
+        if (config != null) {
+            state.setStatus(config.get("taskStatus"));
+        }
+        state.setStatsReport(board.getStatsReport());
+        state.setCoverageHistory(board.getCoverageHistory());
+
+        Map<String, SimState.CarInfo> cars = new HashMap<>();
+        for (String carId : board.getCarList()) {
+            SimState.CarInfo info = new SimState.CarInfo();
+            info.setCarId(carId);
+
+            Map<String, String> pos = board.getPosition(carId);
+            if (pos != null && pos.containsKey("x") && pos.containsKey("y")) {
+                info.setPosition(new Position(
+                        Integer.parseInt(pos.get("x")),
+                        Integer.parseInt(pos.get("y"))
+                ));
+            }
+
+            Map<String, String> target = board.getTarget(carId);
+            if (target != null && target.containsKey("x") && target.containsKey("y")) {
+                info.setTarget(new Position(
+                        Integer.parseInt(target.get("x")),
+                        Integer.parseInt(target.get("y"))
+                ));
+            }
+
+            info.setStatus(board.getStatus(carId));
+            info.setStepsWalked(board.getSteps(carId));
+
+            List<Position> routePositions = new ArrayList<>();
+            for (String routeJson : board.getRouteList(carId)) {
+                routePositions.add(Position.fromJson(routeJson));
+            }
+            info.setRouteList(routePositions);
+
+            cars.put(carId, info);
+        }
+        state.setCars(cars);
+        return state;
+    }
 
     private Map<String, Object> jsonObjectToMap(JSONObject obj) {
         if (obj == null) {

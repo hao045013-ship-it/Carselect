@@ -65,7 +65,7 @@ public class SnapshotRecorder {
         switch (cmd) {
             case MQKeys.CMD_START -> handleStart(data,timestamp);
             case MQKeys.CMD_RESET -> handleReset(timestamp);
-            case MQKeys.CMD_REFRESH_ALL -> handleRefreshAll(timestamp);
+            case MQKeys.CMD_REFRESH_ALL -> handleRefreshAll(data, timestamp);
             case MQKeys.CMD_MOVED -> handleMoved(data, timestamp);
             case MQKeys.CMD_TASK_FINISHED -> handleReset(timestamp);
             default -> {
@@ -118,10 +118,26 @@ public class SnapshotRecorder {
     }
 
     /** REFRESH_ALL：保存完整状态快照 */
-    private void handleRefreshAll(long timestamp) {
-        SimState simState = buildSimState();
-        long tick = toReplayTick(simState.getTick());
+    private void handleRefreshAll(JSONObject data, long timestamp) {
+        SimState simState = null;
+        String stateJsonFromEvent = data == null ? null : data.getString("stateJson");
+        if (stateJsonFromEvent != null && !stateJsonFromEvent.isBlank()) {
+            simState = JSONObject.parseObject(stateJsonFromEvent, SimState.class);
+        }
+        if (simState == null) {
+            simState = buildSimState();
+        }
+
+        long boardTick = data != null && data.containsKey("tick")
+                ? data.getLongValue("tick")
+                : simState.getTick();
+        long tick = toReplayTick(boardTick);
         simState.setTick(tick);
+
+        if (currentSessionId != null && tick <= lastSqlSnapshotTick) {
+            return;
+        }
+
         String stateJson = simState.toJson();
         double coverage = simState.getExploredPercent() / 100.0;
 

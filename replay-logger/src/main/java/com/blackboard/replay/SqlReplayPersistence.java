@@ -92,14 +92,19 @@ public class SqlReplayPersistence {
         if (connection == null) {
             return;
         }
-        String sql = "INSERT INTO snapshot(session_id, ts, tick, coverage, state_json) "
-                + "VALUES (?, ?, ?, ?, ?)";
+        String sql = "IF NOT EXISTS (SELECT 1 FROM snapshot WHERE session_id = ? AND tick = ?) "
+                + "BEGIN "
+                + "INSERT INTO snapshot(session_id, ts, tick, coverage, state_json) "
+                + "VALUES (?, ?, ?, ?, ?) "
+                + "END";
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setString(1, sessionId);
-            ps.setLong(2, ts);
-            ps.setLong(3, tick);
-            ps.setDouble(4, coverage);
-            ps.setString(5, stateJson);
+            ps.setLong(2, tick);
+            ps.setString(3, sessionId);
+            ps.setLong(4, ts);
+            ps.setLong(5, tick);
+            ps.setDouble(6, coverage);
+            ps.setString(7, stateJson);
             ps.executeUpdate();
         } catch (SQLException e) {
             e.printStackTrace();
