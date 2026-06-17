@@ -50,7 +50,7 @@ public class TaskConfiguratorAgent {
         int obstacleDensity = data.getIntValue("obstacleDensity", 10);
         String algorithm = data.getString("algorithm");
         if (algorithm == null || algorithm.isBlank()) {
-            algorithm = "BFS";
+            algorithm = "A_STAR";
         }
 
         Map<String, String> config = new HashMap<>();
@@ -186,7 +186,7 @@ public class TaskConfiguratorAgent {
         config.put("mapWidth", String.valueOf(mapWidth));
         config.put("mapHeight", String.valueOf(mapHeight));
         config.put("taskStatus", TaskStatus.INIT.name());
-        config.put("algorithm", data.getString("algorithm") == null ? "BFS" : data.getString("algorithm"));
+        config.put("algorithm", data.getString("algorithm") == null ? "A_STAR" : data.getString("algorithm"));
 
         board.setTaskConfig(config);
         board.setCurrentTick(0L);

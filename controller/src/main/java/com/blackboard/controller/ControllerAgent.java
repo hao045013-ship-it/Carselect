@@ -532,8 +532,14 @@ public class ControllerAgent {
         if (assignedCars == null) {
             String carId = data.getString("carId");
             if (carId != null) {
-                board.setStatus(carId, CarStatus.WAITING_ROUTE.name());
-                board.addLogEntry("INFO: target assigned: " + carId);
+                boolean assigned = !data.containsKey("assigned") || data.getBooleanValue("assigned");
+                if (assigned) {
+                    board.setStatus(carId, CarStatus.WAITING_ROUTE.name());
+                    board.addLogEntry("INFO: target assigned: " + carId);
+                } else {
+                    board.setStatus(carId, CarStatus.IDLE.name());
+                    board.addLogEntry("WARN: target not assigned: " + carId + ", reason=" + data.getString("reason"));
+                }
             }
             return;
         }
@@ -543,8 +549,14 @@ public class ControllerAgent {
             String carId = car.getString("carId");
 
             if (carId != null && board.carExists(carId)) {
-                board.setStatus(carId, CarStatus.WAITING_ROUTE.name());
-                board.addLogEntry("INFO: target assigned: " + carId);
+                boolean assigned = !car.containsKey("assigned") || car.getBooleanValue("assigned");
+                if (assigned) {
+                    board.setStatus(carId, CarStatus.WAITING_ROUTE.name());
+                    board.addLogEntry("INFO: target assigned: " + carId);
+                } else {
+                    board.setStatus(carId, CarStatus.IDLE.name());
+                    board.addLogEntry("WARN: target not assigned: " + carId + ", reason=" + car.getString("reason"));
+                }
             }
         }
     }
@@ -643,8 +655,16 @@ public class ControllerAgent {
         }
 
         List<String> cars = board.getCarList();
+        List<String> idleCars = new ArrayList<>();
         for (String carId : cars) {
-            dispatchCar(carId, config, currentTick);
+            if (CarStatus.IDLE.name().equals(board.getStatus(carId))) {
+                idleCars.add(carId);
+            } else {
+                dispatchCar(carId, config, currentTick);
+            }
+        }
+        if (!idleCars.isEmpty()) {
+            mq.assignTargets(idleCars);
         }
 
         board.saveCoverageHistory(currentTick, coverage);
@@ -658,10 +678,8 @@ public class ControllerAgent {
             return;
         }
 
-        if (CarStatus.IDLE.name().equals(status)) {
-            mq.assignTarget(carId);
-        } else if (CarStatus.WAITING_ROUTE.name().equals(status)) {
-            String algorithm = config.getOrDefault("algorithm", "BFS");
+        if (CarStatus.WAITING_ROUTE.name().equals(status)) {
+            String algorithm = config.getOrDefault("algorithm", "A_STAR");
             mq.planRoute(carId, algorithm);
         } else if (CarStatus.READY.name().equals(status)) {
             mq.sendTickMove(carId);

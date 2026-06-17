@@ -10,9 +10,7 @@ import com.rabbitmq.client.Connection;
 import com.rabbitmq.client.ConnectionFactory;
 import com.rabbitmq.client.DeliverCallback;
 
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 
 /**
  * 消息队列实现类 —— 封装所有 RabbitMQ 操作
@@ -167,6 +165,14 @@ public class MessageQueueImpl implements MessageQueue {
         Map<String, Object> data = new HashMap<>();
         data.put("carId", carId);
         publish(MQKeys.TARGET_PLANNER_CMD, buildMessage(MQKeys.CMD_ASSIGN_TARGET, data));
+    }
+
+    //新增
+    @Override
+    public void assignTargets(List<String> carIds) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("carIds", carIds == null ? Collections.emptyList() : new ArrayList<>(carIds));
+        publish(MQKeys.TARGET_PLANNER_CMD, buildMessage(MQKeys.CMD_ASSIGN_TARGETS, data));
     }
 
     @Override

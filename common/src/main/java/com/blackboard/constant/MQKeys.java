@@ -31,6 +31,7 @@ public class MQKeys {
 
     // ==================== Target assignment commands ====================
     public static final String CMD_ASSIGN_TARGET = "ASSIGN_TARGET";
+    public static final String CMD_ASSIGN_TARGETS = "ASSIGN_TARGETS";//新增
     public static final String CMD_TARGET_ASSIGNED = "TARGET_ASSIGNED";
     public static final String CMD_ASSIGN_INSPECTION_TARGET = "ASSIGN_INSPECTION_TARGET";
     public static final String CMD_SET_INSPECTION_POINTS = "SET_INSPECTION_POINTS";

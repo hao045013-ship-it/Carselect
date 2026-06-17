@@ -17,6 +17,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.LinkedHashMap;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 
@@ -45,7 +47,8 @@ public class TargetPlannerAgent {
     public void start() {
         mq.connect();
         mq.subscribeTargetPlanner(this::handleMessageSafely);
-        log.info("TargetPlannerAgent started. Waiting for {} messages.", MQKeys.CMD_ASSIGN_TARGET);
+        log.info("TargetPlannerAgent started. Waiting for {} / {} messages.",
+                MQKeys.CMD_ASSIGN_TARGET, MQKeys.CMD_ASSIGN_TARGETS);
     }
 
     private void handleMessageSafely(String rawMessage) {
@@ -62,11 +65,25 @@ public class TargetPlannerAgent {
 
     private void handleMessage(String rawMessage) {
         Message message = JSON.parseObject(rawMessage, Message.class);
-        if (message == null || !MQKeys.CMD_ASSIGN_TARGET.equals(message.getCmd())) {
+        if (message == null) {
+            log.debug("TargetPlanner ignored empty message: {}", rawMessage);
+            return;
+        }
+
+        if (MQKeys.CMD_ASSIGN_TARGETS.equals(message.getCmd())) {
+            handleAssignTargets(message);
+            return;
+        }
+
+        if (!MQKeys.CMD_ASSIGN_TARGET.equals(message.getCmd())) {
             log.debug("TargetPlanner ignored message: {}", rawMessage);
             return;
         }
 
+        handleAssignTarget(message);
+    }
+
+    private void handleAssignTarget(Message message) {
         JSONObject data = JSON.parseObject(JSON.toJSONString(message.getData()));
         String carId = data.getString("carId");
         if (carId == null || carId.isBlank()) {
@@ -83,6 +100,29 @@ public class TargetPlannerAgent {
             replyNotAssigned(carId, result.getReason());
             log.info("Target not assigned for {}, reason={}, metrics={}", carId, result.getReason(), metricsText(result.getMetrics()));
         }
+    }
+
+    private void handleAssignTargets(Message message) {
+        JSONObject data = JSON.parseObject(JSON.toJSONString(message.getData()));
+        JSONArray rawCarIds = data.getJSONArray("carIds");
+        if (rawCarIds == null || rawCarIds.isEmpty()) {
+            return;
+        }
+
+        List<String> carIds = new ArrayList<>();
+        for (int i = 0; i < rawCarIds.size(); i++) {
+            String carId = rawCarIds.getString(i);
+            if (carId != null && !carId.isBlank()) {
+                carIds.add(carId);
+            }
+        }
+
+        List<TargetSelectionResult> results = plannerService.assignTargets(carIds);
+        for (TargetSelectionResult result : results) {
+            logTargetMetrics(result);
+        }
+        replyAssignedBatch(results);
+        log.info("Batch target assignment finished, requested={}, replied={}", carIds.size(), results.size());
     }
 
     private void replyAssigned(TargetSelectionResult result) {
@@ -102,6 +142,23 @@ public class TargetPlannerAgent {
         item.put("reason", reason);
         JSONArray assignedCars = new JSONArray();
         assignedCars.add(item);
+        mq.replyTargetAssigned(assignedCars.toJSONString());
+    }
+
+    private void replyAssignedBatch(List<TargetSelectionResult> results) {
+        JSONArray assignedCars = new JSONArray();
+        for (TargetSelectionResult result : results) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("carId", result.getCarId());
+            item.put("assigned", result.isAssigned());
+            if (result.isAssigned()) {
+                item.put("targetX", result.getTarget().getX());
+                item.put("targetY", result.getTarget().getY());
+            } else {
+                item.put("reason", result.getReason());
+            }
+            assignedCars.add(item);
+        }
         mq.replyTargetAssigned(assignedCars.toJSONString());
     }
 

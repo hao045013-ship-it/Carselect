@@ -62,7 +62,43 @@ public class BlackboardImpl implements Blackboard {
         }
         return result;
     }
+    //新增
+    private boolean isInMap(int row, int col, int width, int height) {
+        return row >= 0 && row < height && col >= 0 && col < width;
+    }
 
+    private boolean hasStaticBlock(Jedis jedis, int row, int col, int width, int height) {
+        return isInMap(row, col, width, height)
+                && jedis.getbit(RedisKeys.STATIC_BLOCK, index(row, col, width));
+    }
+
+    private boolean isVisibleFrom(Jedis jedis,
+                                  int centerRow,
+                                  int centerCol,
+                                  int targetRow,
+                                  int targetCol,
+                                  int width,
+                                  int height) {
+        if (!isInMap(targetRow, targetCol, width, height)) {
+            return false;
+        }
+
+        int dr = targetRow - centerRow;
+        int dc = targetCol - centerCol;
+        if (dr == 0 && dc == 0) {
+            return true;
+        }
+
+        // 半径为 1 时，斜向格不能穿过两个正交障碍的夹角。
+        if (Math.abs(dr) == 1 && Math.abs(dc) == 1) {
+            boolean verticalBlocked = hasStaticBlock(jedis, centerRow + dr, centerCol, width, height);
+            boolean horizontalBlocked = hasStaticBlock(jedis, centerRow, centerCol + dc, width, height);
+            return !(verticalBlocked && horizontalBlocked);
+        }
+
+        return true;
+    }
+    //
     // ==================== 获取连接 ====================
     private Jedis getJedis() {
         return pool.getResource();
