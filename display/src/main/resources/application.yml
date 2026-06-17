@@ -6,9 +6,9 @@ datasource:
   driver-class: com.microsoft.sqlserver.jdbc.SQLServerDriver
   # 默认连接本机 SQL Server Express，端口 1433
   # 如果队友的 SQL Server 在其他机器，修改 localhost 为对应 IP
-  url: jdbc:sqlserver://localhost:1433;databaseName=BlackboardSystem;encrypt=true;trustServerCertificate=true;characterEncoding=UTF-8
+  url: jdbc:sqlserver://LAPTOP-LTTJ001U;databaseName=ExplorationDB;encrypt=false;trustServerCertificate=true
   username: sa
-  password: 123456
+  password: yxy450716
 
   # 连接池配置（HikariCP 可选，当前使用简单 JDBC 连接）
   max-pool-size: 10
