@@ -60,6 +60,7 @@ public class MQKeys {
 
     // ==================== Car registry commands ====================
     public static final String CMD_ADD_CAR = "ADD_CAR";
+    public static final String CMD_ADD_CARS_BATCH = "ADD_CARS_BATCH";
 
     // ==================== Replay / trace commands ====================
     public static final String CMD_RECORD_TRACE = "RECORD_TRACE";

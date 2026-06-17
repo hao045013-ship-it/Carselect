@@ -128,7 +128,6 @@ function resizeCanvas(canvas, wrapper, mapWidth, mapHeight) {
  * @returns {{ cellSize: number, offsetX: number, offsetY: number, gridW: number, gridH: number }}
  */
 function calcLayout(cw, ch, mapWidth, mapHeight) {
-    // 为坐标标签留出边距
     var marginLeft = 32;
     var marginTop = 24;
     var marginRight = 8;
@@ -137,25 +136,20 @@ function calcLayout(cw, ch, mapWidth, mapHeight) {
     var availW = cw - marginLeft - marginRight;
     var availH = ch - marginTop - marginBottom;
 
-    // 保持正方形单元格
     var cellW = Math.floor(availW / mapWidth);
     var cellH = Math.floor(availH / mapHeight);
-    var cellSize = Math.max(8, Math.min(cellW, cellH));
+    var cellSize = Math.min(cellW, cellH);
+    cellSize = Math.max(2, cellSize);
+    while (cellSize > 2 && (cellSize * mapWidth > availW || cellSize * mapHeight > availH)) {
+        cellSize--;
+    }
 
     var gridW = cellSize * mapWidth;
     var gridH = cellSize * mapHeight;
-
-    // 网格居中于可用空间
     var offsetX = marginLeft + Math.floor((availW - gridW) / 2);
     var offsetY = marginTop + Math.floor((availH - gridH) / 2);
 
-    return {
-        cellSize: cellSize,
-        offsetX: offsetX,
-        offsetY: offsetY,
-        gridW: gridW,
-        gridH: gridH
-    };
+    return { cellSize, offsetX, offsetY, gridW, gridH };
 }
 
 // ==================== 网格与标签渲染 ====================
@@ -194,25 +188,35 @@ function renderGrid(ctx, layout, mapWidth, mapHeight) {
         ctx.stroke();
     }
 
-    // 坐标标签 — 列号（上边缘）
+    // 列标签
     ctx.fillStyle = '#556677';
-    ctx.font = (Math.max(9, cs * 0.35)) + 'px ' + '"Microsoft YaHei", sans-serif';
+    var labelFont = Math.min(cs * 1.2, Math.max(6, cs * 0.35));
+    ctx.font = labelFont + 'px "Microsoft YaHei", sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
+    var colInterval;
+    if (cs < 6) {
+        colInterval = Math.max(1, Math.ceil(35 / cs));
+    } else {
+        colInterval = mapWidth <= 20 ? 1 : mapWidth <= 30 ? 2 : mapWidth <= 40 ? 3 : 5;
+    }
     for (i = 0; i < mapWidth; i++) {
-        // 每隔一定间隔绘制标签以避免拥挤
-        var interval = mapWidth <= 20 ? 1 : mapWidth <= 30 ? 2 : mapWidth <= 40 ? 3 : 5;
-        if (i % interval === 0) {
+        if (i % colInterval === 0) {
             ctx.fillText('' + i, ox + i * cs + cs / 2, oy - 3);
         }
     }
 
-    // 坐标标签 — 行号（左边缘）
+    // 行标签
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
+    var rowInterval;
+    if (cs < 6) {
+        rowInterval = Math.max(1, Math.ceil(35 / cs));
+    } else {
+        rowInterval = mapHeight <= 15 ? 1 : mapHeight <= 25 ? 2 : 3;
+    }
     for (i = 0; i < mapHeight; i++) {
-        var intervalH = mapHeight <= 15 ? 1 : mapHeight <= 25 ? 2 : 3;
-        if (i % intervalH === 0) {
+        if (i % rowInterval === 0) {
             ctx.fillText('' + i, ox - 5, oy + i * cs + cs / 2);
         }
     }
@@ -538,7 +542,7 @@ function getCellAtPixel(canvas, pixelX, pixelY, layout, mapWidth, mapHeight) {
  * @param {object} state — 规范化后的状态
  * @param {object} layout — 来自 calcLayout 的布局参数
  */
-function renderAll(canvas, state, layout) {
+function renderAll(canvas, state, layout,ms) {
     var dpr = window.devicePixelRatio || 1;
     var ctx = canvas.getContext('2d');
     var rect = canvas.getBoundingClientRect();
@@ -573,6 +577,10 @@ function renderAll(canvas, state, layout) {
 
     // 绘制机器人
     renderRobots(ctx, layout, state);
+    // 在最后添加放大镜渲染
+    if (shouldShowLens(state, ms)) {
+        renderMagnifierLens(ctx, layout, state, ms);
+    }
 }
 
 // ==================== 辅助函数 ====================
@@ -652,4 +660,190 @@ function darkenColor(hex, amount) {
     g = Math.max(0, Math.floor(g * (1 - amount)));
     b = Math.max(0, Math.floor(b * (1 - amount)));
     return 'rgb(' + r + ',' + g + ',' + b + ')';
+}
+// ==================== 放大镜 ====================
+
+function shouldShowLens(state, ms) {
+    return ms && ms.inside && ms.col >= 0 && ms.row >= 0
+        && (state.mapWidth > 50 || state.mapHeight > 50);
+}
+
+function renderMagnifierLens(ctx, layout, state, ms) {
+    var LENS_RADIUS = 90;
+    var ZOOM = 3;
+    var cs = layout.cellSize;
+    var mw = state.mapWidth;
+    var mh = state.mapHeight;
+    var zoomedCS = cs * ZOOM;
+    var mx = ms.x;
+    var my = ms.y;
+
+    // 计算源区域（以单元格为单位）
+    var sourceHalf = LENS_RADIUS / zoomedCS;
+    var startCol = Math.max(0, Math.floor(ms.col - sourceHalf));
+    var startRow = Math.max(0, Math.floor(ms.row - sourceHalf));
+    var endCol = Math.min(mw - 1, Math.ceil(ms.col + sourceHalf));
+    var endRow = Math.min(mh - 1, Math.ceil(ms.row + sourceHalf));
+
+    ctx.save();
+
+    // 圆形裁剪
+    ctx.beginPath();
+    ctx.arc(mx, my, LENS_RADIUS, 0, Math.PI * 2);
+    ctx.clip();
+
+    // 透镜背景
+    ctx.fillStyle = 'rgba(6, 21, 41, 0.94)';
+    ctx.fillRect(mx - LENS_RADIUS, my - LENS_RADIUS, LENS_RADIUS * 2, LENS_RADIUS * 2);
+
+    var row, col, idx, sx, sy;
+    var staticBlock = state.staticBlock || [];
+    var dynamicBlock = state.dynamicBlock || [];
+    var mapView = state.mapView || [];
+    var hasMapData = mapView.length > 0 || staticBlock.length > 0;
+
+    // 绘制放大后的单元格
+    for (row = startRow; row <= endRow; row++) {
+        for (col = startCol; col <= endCol; col++) {
+            idx = row * mw + col;
+            // 透镜中的屏幕坐标：鼠标位置 + 偏移
+            sx = mx + (col - ms.col) * zoomedCS;
+            sy = my + (row - ms.row) * zoomedCS;
+
+            if (!hasMapData) {
+                ctx.fillStyle = '#0a1628';
+                ctx.fillRect(sx + 0.5, sy + 0.5, zoomedCS - 1, zoomedCS - 1);
+                continue;
+            }
+
+            var isStaticObs = staticBlock[idx] === true;
+            var isDynamicObs = dynamicBlock[idx] === true;
+            var isExplored = mapView[idx] === true;
+
+            if (isStaticObs) {
+                ctx.fillStyle = '#662222';
+                ctx.fillRect(sx + 0.5, sy + 0.5, zoomedCS - 1, zoomedCS - 1);
+                // 放大后单元格够大，绘制内部高亮
+                ctx.fillStyle = 'rgba(255, 100, 100, 0.15)';
+                ctx.fillRect(sx + 2, sy + 2, zoomedCS - 4, zoomedCS - 4);
+            } else if (isDynamicObs) {
+                ctx.fillStyle = '#553322';
+                ctx.fillRect(sx + 0.5, sy + 0.5, zoomedCS - 1, zoomedCS - 1);
+                ctx.fillStyle = 'rgba(255, 150, 50, 0.12)';
+                ctx.fillRect(sx + 2, sy + 2, zoomedCS - 4, zoomedCS - 4);
+            } else if (isExplored) {
+                ctx.fillStyle = 'rgba(30, 196, 255, 0.18)';
+                ctx.fillRect(sx + 0.5, sy + 0.5, zoomedCS - 1, zoomedCS - 1);
+            } else {
+                ctx.fillStyle = '#0a1628';
+                ctx.fillRect(sx + 0.5, sy + 0.5, zoomedCS - 1, zoomedCS - 1);
+            }
+        }
+    }
+
+    // 绘制放大后的网格线
+    ctx.strokeStyle = 'rgba(30, 196, 255, 0.35)';
+    ctx.lineWidth = 0.5;
+    var i;
+    for (i = startCol; i <= endCol + 1; i++) {
+        var vx = mx + (i - ms.col) * zoomedCS;
+        ctx.beginPath();
+        ctx.moveTo(vx, my + (startRow - ms.row) * zoomedCS);
+        ctx.lineTo(vx, my + (endRow + 1 - ms.row) * zoomedCS);
+        ctx.stroke();
+    }
+    for (i = startRow; i <= endRow + 1; i++) {
+        var vy = my + (i - ms.row) * zoomedCS;
+        ctx.beginPath();
+        ctx.moveTo(mx + (startCol - ms.col) * zoomedCS, vy);
+        ctx.lineTo(mx + (endCol + 1 - ms.col) * zoomedCS, vy);
+        ctx.stroke();
+    }
+
+    // 绘制放大后的机器人（简化版）
+    var cars = state.cars || {};
+    Object.keys(cars).forEach(function (carId) {
+        var car = cars[carId];
+        if (!car || !car.position) return;
+        var cCol = car.position.x;
+        var cRow = car.position.y;
+        if (cCol < startCol || cCol > endCol || cRow < startRow || cRow > endRow) return;
+
+        var rx = mx + (cCol - ms.col + 0.5) * zoomedCS;
+        var ry = my + (cRow - ms.row + 0.5) * zoomedCS;
+        var robotRadius = zoomedCS * 0.35;
+        var color = getRobotColor(carId);
+
+        // 光晕
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(rx, ry, robotRadius + 2, 0, Math.PI * 2);
+        var glowGrad = ctx.createRadialGradient(rx, ry, robotRadius * 0.5, rx, ry, robotRadius + 2);
+        glowGrad.addColorStop(0, color);
+        glowGrad.addColorStop(1, 'transparent');
+        ctx.fillStyle = glowGrad;
+        ctx.globalAlpha = 0.35;
+        ctx.fill();
+        ctx.restore();
+
+        // 主体圆形
+        ctx.beginPath();
+        ctx.arc(rx, ry, robotRadius, 0, Math.PI * 2);
+        var bodyGrad = ctx.createRadialGradient(rx - robotRadius * 0.3, ry - robotRadius * 0.3, robotRadius * 0.1, rx, ry, robotRadius);
+        bodyGrad.addColorStop(0, lightenColor(color, 0.4));
+        bodyGrad.addColorStop(0.7, color);
+        bodyGrad.addColorStop(1, darkenColor(color, 0.3));
+        ctx.fillStyle = bodyGrad;
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+        ctx.lineWidth = Math.max(1, zoomedCS * 0.04);
+        ctx.stroke();
+
+        // ID 标签
+        var labelFontSizeR = Math.max(8, zoomedCS * 0.28);
+        ctx.font = 'bold ' + labelFontSizeR + 'px "Microsoft YaHei", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        var textW = ctx.measureText(carId).width;
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+        roundRect(ctx, rx - textW / 2 - 3, ry - robotRadius - 14, textW + 6, 14, 2);
+        ctx.fill();
+        ctx.fillStyle = color;
+        ctx.fillText(carId, rx, ry - robotRadius - 2);
+    });
+
+    ctx.restore();
+
+    // 绘制透镜边框（发光效果）
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(mx, my, LENS_RADIUS, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(30, 196, 255, 0.55)';
+    ctx.lineWidth = 2;
+    ctx.shadowColor = 'rgba(30, 196, 255, 0.7)';
+    ctx.shadowBlur = 14;
+    ctx.stroke();
+
+    // 内圈高亮
+    ctx.beginPath();
+    ctx.arc(mx, my, LENS_RADIUS - 2, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(30, 196, 255, 0.2)';
+    ctx.lineWidth = 1;
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.stroke();
+    ctx.restore();
+
+    // 中心十字准星
+    ctx.save();
+    ctx.strokeStyle = 'rgba(30, 196, 255, 0.6)';
+    ctx.lineWidth = 0.5;
+    var chLen = 5;
+    ctx.beginPath();
+    ctx.moveTo(mx - chLen, my);
+    ctx.lineTo(mx + chLen, my);
+    ctx.moveTo(mx, my - chLen);
+    ctx.lineTo(mx, my + chLen);
+    ctx.stroke();
+    ctx.restore();
 }

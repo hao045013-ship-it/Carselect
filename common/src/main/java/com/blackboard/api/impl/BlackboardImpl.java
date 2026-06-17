@@ -4,12 +4,14 @@ import com.blackboard.api.Blackboard;
 import com.blackboard.constant.RedisKeys;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
+import redis.clients.jedis.Pipeline;
 import redis.clients.jedis.Transaction;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
+import java.util.Random;
 
 /**
  * 黑板实现类 —— 封装所有 Redis 操作
@@ -38,6 +40,27 @@ public class BlackboardImpl implements Blackboard {
     // 辅助方法：计算线性索引（带地图宽度）
     private int index(int row, int col, int width) {
         return row * width + col;
+    }
+
+    private byte[] redisKeyBytes(String key) {
+        return key.getBytes(StandardCharsets.UTF_8);
+    }
+
+    private boolean[] readBitmap(Jedis jedis, String key, int total) {
+        boolean[] result = new boolean[total];
+        byte[] raw = jedis.get(redisKeyBytes(key));
+        if (raw == null || raw.length == 0) {
+            return result;
+        }
+        for (int i = 0; i < total; i++) {
+            int byteIndex = i / 8;
+            if (byteIndex >= raw.length) {
+                break;
+            }
+            int bitIndex = 7 - (i % 8);
+            result[i] = ((raw[byteIndex] >> bitIndex) & 1) == 1;
+        }
+        return result;
     }
 
     // ==================== 获取连接 ====================
@@ -82,12 +105,7 @@ public class BlackboardImpl implements Blackboard {
         try (Jedis jedis = getJedis()) {
             int width = getWidth(jedis);
             int height = getHeight(jedis);
-            int total = width * height;
-            boolean[] result = new boolean[total];
-            for (int i = 0; i < total; i++) {
-                result[i] = jedis.getbit(RedisKeys.MAP_VIEW, i);
-            }
-            return result;
+            return readBitmap(jedis, RedisKeys.MAP_VIEW, width * height);
         }
     }
 
@@ -113,12 +131,7 @@ public class BlackboardImpl implements Blackboard {
         try (Jedis jedis = getJedis()) {
             int width = getWidth(jedis);
             int height = getHeight(jedis);
-            int total = width * height;
-            boolean[] result = new boolean[total];
-            for (int i = 0; i < total; i++) {
-                result[i] = jedis.getbit(RedisKeys.STATIC_BLOCK, i);
-            }
-            return result;
+            return readBitmap(jedis, RedisKeys.STATIC_BLOCK, width * height);
         }
     }
 
@@ -128,28 +141,25 @@ public class BlackboardImpl implements Blackboard {
             int width = getWidth(jedis);
             int height = getHeight(jedis);
             // 清除所有静态障碍
-            for (int i = 0; i < width * height; i++) {
-                jedis.setbit(RedisKeys.STATIC_BLOCK, i, false);
-            }
+            jedis.del(RedisKeys.STATIC_BLOCK);
+            Pipeline pipeline = jedis.pipelined();
+            Random random = new Random();
             // 随机生成（避开边界）
             for (int r = 1; r < height - 1; r++) {
                 for (int c = 1; c < width - 1; c++) {
-                    if (Math.random() < density) {
-                        jedis.setbit(RedisKeys.STATIC_BLOCK, index(r, c, width), true);
+                    if (random.nextDouble() < density) {
+                        pipeline.setbit(RedisKeys.STATIC_BLOCK, index(r, c, width), true);
                     }
                 }
             }
+            pipeline.sync();
         }
     }
 
     @Override
     public void clearStaticBlocks() {
         try (Jedis jedis = getJedis()) {
-            int width = getWidth(jedis);
-            int height = getHeight(jedis);
-            for (int i = 0; i < width * height; i++) {
-                jedis.setbit(RedisKeys.STATIC_BLOCK, i, false);
-            }
+            jedis.del(RedisKeys.STATIC_BLOCK);
         }
     }
 
@@ -173,11 +183,7 @@ public class BlackboardImpl implements Blackboard {
     @Override
     public void clearDynamicBlocks() {
         try (Jedis jedis = getJedis()) {
-            int width = getWidth(jedis);
-            int height = getHeight(jedis);
-            for (int i = 0; i < width * height; i++) {
-                jedis.setbit(RedisKeys.DYNAMIC_BLOCK, i, false);
-            }
+            jedis.del(RedisKeys.DYNAMIC_BLOCK);
         }
     }
 
@@ -186,12 +192,7 @@ public class BlackboardImpl implements Blackboard {
         try (Jedis jedis = getJedis()) {
             int width = getWidth(jedis);
             int height = getHeight(jedis);
-            int total = width * height;
-            boolean[] result = new boolean[total];
-            for (int i = 0; i < total; i++) {
-                result[i] = jedis.getbit(RedisKeys.DYNAMIC_BLOCK, i);
-            }
-            return result;
+            return readBitmap(jedis, RedisKeys.DYNAMIC_BLOCK, width * height);
         }
     }
 
@@ -254,6 +255,41 @@ public class BlackboardImpl implements Blackboard {
     public boolean carExists(String carId) {
         try (Jedis jedis = getJedis()) {
             return jedis.sismember(RedisKeys.REGISTRY_CARS, carId);
+        }
+    }
+
+    @Override
+    public boolean tryAddCar(String carId, int row, int col, String status) {
+        try (Jedis jedis = getJedis()) {
+            int width = getWidth(jedis);
+            int height = getHeight(jedis);
+            if (carId == null || carId.isBlank()
+                    || row < 0 || row >= height
+                    || col < 0 || col >= width) {
+                return false;
+            }
+
+            int cellIndex = index(row, col, width);
+            String positionKey = RedisKeys.positionKey(carId);
+            String statusKey = RedisKeys.statusKey(carId);
+
+            jedis.watch(RedisKeys.REGISTRY_CARS, RedisKeys.STATIC_BLOCK, RedisKeys.DYNAMIC_BLOCK, positionKey);
+
+            boolean exists = jedis.sismember(RedisKeys.REGISTRY_CARS, carId);
+            boolean blocked = jedis.getbit(RedisKeys.STATIC_BLOCK, cellIndex)
+                    || jedis.getbit(RedisKeys.DYNAMIC_BLOCK, cellIndex);
+            if (exists || blocked) {
+                jedis.unwatch();
+                return false;
+            }
+
+            Transaction tx = jedis.multi();
+            tx.sadd(RedisKeys.REGISTRY_CARS, carId);
+            tx.hset(positionKey, "x", String.valueOf(col));
+            tx.hset(positionKey, "y", String.valueOf(row));
+            tx.set(statusKey, status == null ? "IDLE" : status);
+            tx.setbit(RedisKeys.DYNAMIC_BLOCK, cellIndex, true);
+            return tx.exec() != null;
         }
     }
 
@@ -651,7 +687,7 @@ public class BlackboardImpl implements Blackboard {
             // 旧位置清除动态障碍（车辆占位）
             if (newIndex != oldIndex) {
                 t.setbit(RedisKeys.DYNAMIC_BLOCK, oldIndex, false);
-            // 新位置设置动态障碍
+                // 新位置设置动态障碍
                 t.setbit(RedisKeys.DYNAMIC_BLOCK, newIndex, true);
             }
 
@@ -680,14 +716,14 @@ public class BlackboardImpl implements Blackboard {
             return (double) explored / (width * height) * 100.0;
         }
     }
-   //节拍
-   @Override
-   public long getCurrentTick() {
-       try (Jedis jedis = getJedis()) {
-           String val = jedis.get(RedisKeys.CURRENT_TICK);
-           return val == null ? 0L : Long.parseLong(val);
-       }
-   }
+    //节拍
+    @Override
+    public long getCurrentTick() {
+        try (Jedis jedis = getJedis()) {
+            String val = jedis.get(RedisKeys.CURRENT_TICK);
+            return val == null ? 0L : Long.parseLong(val);
+        }
+    }
 
     @Override
     public void setCurrentTick(long tick) {

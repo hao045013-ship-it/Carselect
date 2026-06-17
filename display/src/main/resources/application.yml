@@ -6,7 +6,7 @@ datasource:
   driver-class: com.microsoft.sqlserver.jdbc.SQLServerDriver
   # 默认连接本机 SQL Server Express，端口 1433
   # 如果队友的 SQL Server 在其他机器，修改 localhost 为对应 IP
-  url: jdbc:sqlserver://localhost:1433;databaseName=BlackboardSystem;encrypt=true;trustServerCertificate=true;characterEncoding=UTF-8
+  url: jdbc:sqlserver://127.0.0.1:1433;databaseName=ExplorationDB;encrypt=true;trustServerCertificate=true;characterEncoding=UTF-8
   username: sa
   password: Chen12345678
 

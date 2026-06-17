@@ -9,8 +9,6 @@ import com.blackboard.api.impl.MessageQueueImpl;
 import com.blackboard.constant.MQKeys;
 import com.blackboard.constant.RedisKeys;
 import com.blackboard.model.CarStatus;
-import com.blackboard.model.TaskStatus;
-import com.blackboard.model.CarStatus;
 import com.blackboard.model.Position;
 import com.blackboard.model.SimState;
 import com.blackboard.model.TaskStatus;
@@ -20,8 +18,10 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
 
 public class ControllerAgent {
 
@@ -122,6 +122,10 @@ public class ControllerAgent {
 
                 case MQKeys.CMD_ADD_CAR:
                     handleAddCar(data);
+                    break;
+
+                case MQKeys.CMD_ADD_CARS_BATCH:
+                    handleAddCarsBatch(data);
                     break;
 
                 case MQKeys.CMD_LOAD_MAP_FILE:
@@ -397,23 +401,84 @@ public class ControllerAgent {
             return;
         }
 
-        if (board.hasBlock(y, x)) {
-            board.addLogEntry("WARN: ADD_CAR failed, blocked position: " + carId);
+        mq.declareCarQueue(carId);
+
+        if (!board.tryAddCar(carId, y, x, CarStatus.IDLE.name())) {
+            board.addLogEntry("WARN: ADD_CAR failed, blocked or occupied position: " + carId);
             return;
         }
 
-        mq.declareCarQueue(carId);
-
-        board.addCar(carId);
-        board.setPosition(carId, y, x);
-        board.setStatus(carId, CarStatus.IDLE.name());
-        board.setDynamicBlock(y, x, true);
         board.appendTrace(carId, board.getCurrentTick(), x, y);
 
         illuminateInitialArea(x, y);
 
         board.addLogEntry("INFO: ADD_CAR success: " + carId + " at (" + x + "," + y + ")");
         broadcastSnapshot(board.getCurrentTick());
+    }
+
+    private void handleAddCarsBatch(JSONObject data) {
+        int requested = data == null ? 0 : data.getIntValue("count");
+        if (requested <= 0 && data != null) {
+            int targetCount = data.getIntValue("targetCount", 0);
+            requested = Math.max(0, targetCount - board.getCarList().size());
+        }
+        if (requested <= 0) {
+            board.addLogEntry("WARN: ADD_CARS_BATCH ignored, count <= 0");
+            return;
+        }
+
+        int added = 0;
+        int attempts = 0;
+        int width = board.getMapWidth();
+        int height = board.getMapHeight();
+        int maxAttempts = Math.max(100, width * height * 3);
+
+        while (added < requested && attempts < maxAttempts) {
+            attempts++;
+            int x = ThreadLocalRandom.current().nextInt(width);
+            int y = ThreadLocalRandom.current().nextInt(height);
+            if (!isFreeForCar(x, y)) {
+                continue;
+            }
+
+            String carId = nextAvailableCarId();
+            if (addCarUnchecked(carId, x, y)) {
+                added++;
+            }
+        }
+
+        if (added > 0) {
+            board.addLogEntry("INFO: ADD_CARS_BATCH success: added=" + added + ", requested=" + requested);
+            broadcastSnapshot(board.getCurrentTick());
+        } else {
+            board.addLogEntry("WARN: ADD_CARS_BATCH failed, no free cells found");
+        }
+    }
+
+    private boolean addCarUnchecked(String carId, int x, int y) {
+        mq.declareCarQueue(carId);
+
+        if (!board.tryAddCar(carId, y, x, CarStatus.IDLE.name())) {
+            return false;
+        }
+
+        board.appendTrace(carId, board.getCurrentTick(), x, y);
+        illuminateInitialArea(x, y);
+        return true;
+    }
+
+    private boolean isFreeForCar(int x, int y) {
+        return isInMap(x, y) && !board.hasBlock(y, x);
+    }
+
+    private String nextAvailableCarId() {
+        int n = 1;
+        String carId = "Car" + String.format("%03d", n);
+        while (board.carExists(carId)) {
+            n++;
+            carId = "Car" + String.format("%03d", n);
+        }
+        return carId;
     }
 
     private boolean isInMap(int x, int y) {
