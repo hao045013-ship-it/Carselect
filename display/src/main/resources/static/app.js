@@ -55,6 +55,7 @@ var currentUser = {
 
 /** 用于防闪烁 — 缓存上次机器人数据快照 */
 var _lastCarSnapshot = '';
+var mouseState = { inside: false, x: 0, y: 0, col: -1, row: -1 };
 /** 趋势图覆盖率历史（本地记录，与 coverageHistory 互补） */
 var _trendData = [];
 
@@ -934,6 +935,21 @@ function wireEvents() {
     //画布悬停
     DOM.mapCanvas.addEventListener('mousemove', function (e) {
         var rect = DOM.mapCanvas.getBoundingClientRect();
+        //用于更新鼠标位置和网格坐标
+        var mx = e.clientX - rect.left;
+        var my = e.clientY - rect.top;
+        mouseState.inside = true;
+        mouseState.x = mx;
+        mouseState.y = my;
+        var cell = getCellAt(DOM.mapCanvas, mx, my, layout, state.mapWidth, state.mapHeight);
+        if (cell) {
+            mouseState.col = cell.col;
+            mouseState.row = cell.row;
+        } else {
+            mouseState.col = -1;
+            mouseState.row = -1;
+        }
+        //
         var cell = getCellAt(DOM.mapCanvas, e.clientX - rect.left, e.clientY - rect.top, layout, state.mapWidth, state.mapHeight);
         var tip = DOM.cellTooltip;
         if (cell && cell.col >= 0 && cell.col < state.mapWidth && cell.row >= 0 && cell.row < state.mapHeight) {
@@ -952,8 +968,12 @@ function wireEvents() {
             tip.style.left = cx + 'px'; tip.style.top = cy + 'px';
         } else { tip.classList.remove('visible'); }
     });
-    DOM.mapCanvas.addEventListener('mouseleave', function () { DOM.cellTooltip.classList.remove('visible'); });
-
+    DOM.mapCanvas.addEventListener('mouseleave', function () {
+        DOM.cellTooltip.classList.remove('visible');
+        mouseState.inside = false;
+        mouseState.col = -1;
+        mouseState.row = -1;
+    });
     // 地图点击——障碍物编辑 / 小车部署
     DOM.mapCanvas.addEventListener('click', function (e) {
         var rect = DOM.mapCanvas.getBoundingClientRect();
@@ -1661,6 +1681,10 @@ function applySettingsToUI() {
 
 function addCarAt(col, row) {
     ensureMapArrays();
+    if (!wsConnected) {
+        addLog('warn', 'WebSocket 未连接，无法部署小车');
+        return;
+    }
     // 检查数量上限
     var maxCars = parseInt(DOM.robotCount.value) || 5;
     var currentCount = Object.keys(state.cars).length;
@@ -1687,27 +1711,29 @@ function addCarAt(col, row) {
         carId = 'Car' + String(nextNum).padStart(3, '0');
     }
 
-    state.cars[carId] = {
-        carId: carId,
-        position: { x: col, y: row },
-        target: null,
-        routeList: [],
-        status: 'IDLE',
-        stepsWalked: 0,
-        battery: 100
-    };
-    state.connectedRobots = Object.keys(state.cars).length;
-    state.dynamicBlock[idx] = true;
-    stateDirty = true;
-    _lastCarSnapshot = '';
-    _lastStepsSnapshot = '';
-    updateRobotCards();
-    updateStepsStats();
-    addLog('success', '已部署小车 ' + carId + ' 位置 (' + col + ', ' + row + ')');
-    // 同步到后端
-    if (wsConnected) {
-        sendCommand('ADD_CAR', { carId: carId, row: row, col: col });
-    }
+    // state.cars[carId] = {
+    //     carId: carId,
+    //     position: { x: col, y: row },
+    //     target: null,
+    //     routeList: [],
+    //     status: 'IDLE',
+    //     stepsWalked: 0,
+    //     battery: 100
+    // };
+    // state.connectedRobots = Object.keys(state.cars).length;
+    // state.dynamicBlock[idx] = true;
+    // stateDirty = true;
+    // _lastCarSnapshot = '';
+    // _lastStepsSnapshot = '';
+    // updateRobotCards();
+    // updateStepsStats();
+    // addLog('success', '已部署小车 ' + carId + ' 位置 (' + col + ', ' + row + ')');
+    // // 同步到后端
+    // if (wsConnected) {
+    //     sendCommand('ADD_CAR', { carId: carId, row: row, col: col });
+    // }
+    sendCommand('ADD_CAR', { carId: carId, row: row, col: col });
+    addLog('info', '已请求部署小车 ' + carId + ' 位置 (' + col + ', ' + row + ')');
 }
 
 function addRandomCars() {
@@ -1727,43 +1753,13 @@ function addRandomCars() {
         return;
     }
 
-    var added = 0;
-    var attempts = 0;
-    var maxAttempts = Math.max(100, state.mapWidth * state.mapHeight * 3);
-    while (added < toAdd && attempts < maxAttempts) {
-        attempts++;
-        var col = Math.floor(Math.random() * state.mapWidth);
-        var row = Math.floor(Math.random() * state.mapHeight);
-        if (!isFreeForCar(col, row)) continue;
-
-        var carId = nextCarId();
-        state.cars[carId] = {
-            carId: carId,
-            position: { x: col, y: row },
-            target: null,
-            routeList: [],
-            status: 'IDLE',
-            stepsWalked: 0,
-            battery: 100
-        };
-        state.dynamicBlock[row * state.mapWidth + col] = true;
-        sendCommand('ADD_CAR', { carId: carId, row: row, col: col });
-        added++;
-    }
-
-    if (added > 0) {
-        state.connectedRobots = Object.keys(state.cars).length;
-        stateDirty = true;
-        _lastCarSnapshot = '';
-        _lastStepsSnapshot = '';
-        addLog('success', '已随机部署 ' + added + ' 辆小车');
-        updateRobotCards();
-        updateStepsStats();
-        updateStatistics();
-        updateSystemInfo();
-    } else {
-        addLog('warn', '没有找到可放置小车的空格，请先清除部分障碍物');
-    }
+    sendCommand('ADD_CARS_BATCH', {
+        count: toAdd,
+        targetCount: targetCount,
+        mapWidth: state.mapWidth,
+        mapHeight: state.mapHeight
+    });
+    addLog('info', '已请求后端随机部署 ' + toAdd + ' 辆小车');
 }
 
 function ensureMapArrays() {
@@ -1828,7 +1824,7 @@ function startRenderLoop() {
             var now = Date.now();
             if (now - lastDomUpdate >= DOM_UPDATE_INTERVAL) { updateUI(); stateDirty = false; lastDomUpdate = now; }
         }
-        if (layout) renderAll(DOM.mapCanvas, state, layout);
+        if (layout) renderAll(DOM.mapCanvas, state, layout, mouseState);
     }
     animFrameId = requestAnimationFrame(loop);
 }

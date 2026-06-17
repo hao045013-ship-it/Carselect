@@ -36,6 +36,7 @@ public interface Blackboard {
     void removeCar(String carId);
     List<String> getCarList();
     boolean carExists(String carId);
+    boolean tryAddCar(String carId, int row, int col, String status);
 
 
     // ==================== 轨迹回放 ====================

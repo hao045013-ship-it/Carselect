@@ -27,7 +27,7 @@ public class SimWebSocketServer extends WebSocketServer {
 
     private static final Set<String> BACKEND_COMMANDS = Set.of(
             "SET_CONFIG", "START", "PAUSE", "RESUME", "RESET", "SET_SPEED",
-            "ADD_CAR", "REMOVE_CAR",
+            "ADD_CAR", "ADD_CARS_BATCH", "REMOVE_CAR",
             "SET_OBSTACLE", "RANDOM_OBSTACLE", "CLEAR_OBSTACLE"
     );
 
@@ -123,6 +123,7 @@ public class SimWebSocketServer extends WebSocketServer {
                 int col = data.containsKey("col") ? data.getIntValue("col") : data.getIntValue("x");
                 SimpleBridge.addCar(carId, row, col);
             }
+            case "ADD_CARS_BATCH" -> SimpleBridge.sendCommand("ADD_CARS_BATCH", toMap(data));
             case "SET_OBSTACLE" -> {
                 if (data == null) {
                     throw new IllegalArgumentException("SET_OBSTACLE missing data");
