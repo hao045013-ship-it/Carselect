@@ -6,6 +6,7 @@ import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.Pipeline;
 import redis.clients.jedis.Transaction;
+import redis.clients.jedis.params.SetParams;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -72,7 +73,15 @@ public class BlackboardImpl implements Blackboard {
                 && jedis.getbit(RedisKeys.STATIC_BLOCK, index(row, col, width));
     }
 
-    private boolean isVisibleFrom(Jedis jedis,
+    private boolean hasStaticBlock(boolean[] staticBlocks, int row, int col, int width, int height) {
+        if (!isInMap(row, col, width, height) || staticBlocks == null) {
+            return false;
+        }
+        int idx = index(row, col, width);
+        return idx >= 0 && idx < staticBlocks.length && staticBlocks[idx];
+    }
+
+    private boolean isVisibleFrom(boolean[] staticBlocks,
                                   int centerRow,
                                   int centerCol,
                                   int targetRow,
@@ -91,8 +100,8 @@ public class BlackboardImpl implements Blackboard {
 
         // 半径为 1 时，斜向格不能穿过两个正交障碍的夹角。
         if (Math.abs(dr) == 1 && Math.abs(dc) == 1) {
-            boolean verticalBlocked = hasStaticBlock(jedis, centerRow + dr, centerCol, width, height);
-            boolean horizontalBlocked = hasStaticBlock(jedis, centerRow, centerCol + dc, width, height);
+            boolean verticalBlocked = hasStaticBlock(staticBlocks, centerRow + dr, centerCol, width, height);
+            boolean horizontalBlocked = hasStaticBlock(staticBlocks, centerRow, centerCol + dc, width, height);
             return !(verticalBlocked && horizontalBlocked);
         }
 
@@ -125,6 +134,32 @@ public class BlackboardImpl implements Blackboard {
         try (Jedis jedis = getJedis()) {
             int width = getWidth(jedis);
             jedis.setbit(RedisKeys.MAP_VIEW, index(row, col, width), true);
+        }
+    }
+
+    @Override
+    public void revealVision(int centerX, int centerY, int radius) {
+        try (Jedis jedis = getJedis()) {
+            int width = getWidth(jedis);
+            int height = getHeight(jedis);
+            boolean[] staticBlocks = readBitmap(jedis, RedisKeys.STATIC_BLOCK, width * height);
+            Transaction tx = jedis.multi();
+            revealVisionInTransaction(tx, staticBlocks, centerX, centerY, radius, width, height);
+            tx.exec();
+        }
+    }
+
+    private void revealVisionInTransaction(Transaction tx, boolean[] staticBlocks,
+                                           int centerX, int centerY,
+                                           int radius, int width, int height) {
+        for (int dr = -radius; dr <= radius; dr++) {
+            for (int dc = -radius; dc <= radius; dc++) {
+                int row = centerY + dr;
+                int col = centerX + dc;
+                if (isVisibleFrom(staticBlocks, centerY, centerX, row, col, width, height)) {
+                    tx.setbit(RedisKeys.MAP_VIEW, index(row, col, width), true);
+                }
+            }
         }
     }
 
@@ -349,6 +384,51 @@ public class BlackboardImpl implements Blackboard {
     public long getCarCount() {
         try (Jedis jedis = getJedis()) {
             return jedis.scard(RedisKeys.REGISTRY_CARS);
+        }
+    }
+
+    @Override
+    public void registerCarInfo(String carId, int row, int col, String status) {
+        try (Jedis jedis = getJedis()) {
+            jedis.sadd(RedisKeys.REGISTRY_CARS, carId);
+            String key = RedisKeys.registryCarInfoKey(carId);
+            jedis.hset(key, "carId", carId);
+            jedis.hset(key, "row", String.valueOf(row));
+            jedis.hset(key, "col", String.valueOf(col));
+            jedis.hset(key, "status", status == null ? "UNKNOWN" : status);
+            jedis.hset(key, "lastSeen", String.valueOf(System.currentTimeMillis()));
+        }
+    }
+
+    @Override
+    public void heartbeatCar(String carId, String status) {
+        try (Jedis jedis = getJedis()) {
+            String key = RedisKeys.registryCarInfoKey(carId);
+            jedis.hset(key, "carId", carId);
+            jedis.hset(key, "status", status == null ? "ONLINE" : status);
+            jedis.hset(key, "lastSeen", String.valueOf(System.currentTimeMillis()));
+        }
+    }
+
+    @Override
+    public void registerKnowledgeSource(String agentId, String type, String status) {
+        try (Jedis jedis = getJedis()) {
+            jedis.sadd(RedisKeys.REGISTRY_KS, agentId);
+            String key = RedisKeys.registryKnowledgeSourceInfoKey(agentId);
+            jedis.hset(key, "agentId", agentId);
+            jedis.hset(key, "type", type == null ? "UNKNOWN" : type);
+            jedis.hset(key, "status", status == null ? "ONLINE" : status);
+            jedis.hset(key, "lastSeen", String.valueOf(System.currentTimeMillis()));
+        }
+    }
+
+    @Override
+    public void heartbeatKnowledgeSource(String agentId, String status) {
+        try (Jedis jedis = getJedis()) {
+            String key = RedisKeys.registryKnowledgeSourceInfoKey(agentId);
+            jedis.hset(key, "agentId", agentId);
+            jedis.hset(key, "status", status == null ? "ONLINE" : status);
+            jedis.hset(key, "lastSeen", String.valueOf(System.currentTimeMillis()));
         }
     }
 
@@ -714,6 +794,7 @@ public class BlackboardImpl implements Blackboard {
                 return false;
             }
 
+            boolean[] staticBlocks = readBitmap(jedis, RedisKeys.STATIC_BLOCK, width * height);
             Transaction t = jedis.multi();
 
             // 更新位置
@@ -728,15 +809,7 @@ public class BlackboardImpl implements Blackboard {
             }
 
             // 点亮视野范围（使用 MAP_VIEW）
-            for (int dr = -visionRadius; dr <= visionRadius; dr++) {
-                for (int dc = -visionRadius; dc <= visionRadius; dc++) {
-                    int vr = newY + dr;
-                    int vc = newX + dc;
-                    if (vr >= 0 && vr < height && vc >= 0 && vc < width) {
-                        t.setbit(RedisKeys.MAP_VIEW, index(vr, vc, width), true);
-                    }
-                }
-            }
+            revealVisionInTransaction(t, staticBlocks, newX, newY, visionRadius, width, height);
             t.incr(RedisKeys.stepsKey(carId));
             return t.exec() != null;
         }
@@ -765,6 +838,67 @@ public class BlackboardImpl implements Blackboard {
     public void setCurrentTick(long tick) {
         try (Jedis jedis = getJedis()) {
             jedis.set(RedisKeys.CURRENT_TICK, String.valueOf(tick));
+        }
+    }
+
+    @Override
+    public boolean acquireControllerLeadership(String instanceId, int ttlSeconds) {
+        try (Jedis jedis = getJedis()) {
+            String result = jedis.set(
+                    RedisKeys.CONTROLLER_LEADER,
+                    instanceId,
+                    SetParams.setParams().nx().ex(ttlSeconds)
+            );
+            return "OK".equals(result) || instanceId.equals(jedis.get(RedisKeys.CONTROLLER_LEADER));
+        }
+    }
+
+    @Override
+    public boolean refreshControllerLeadership(String instanceId, int ttlSeconds) {
+        try (Jedis jedis = getJedis()) {
+            jedis.watch(RedisKeys.CONTROLLER_LEADER);
+            String currentLeader = jedis.get(RedisKeys.CONTROLLER_LEADER);
+            if (!instanceId.equals(currentLeader)) {
+                jedis.unwatch();
+                return false;
+            }
+
+            Transaction tx = jedis.multi();
+            tx.expire(RedisKeys.CONTROLLER_LEADER, ttlSeconds);
+            return tx.exec() != null;
+        }
+    }
+
+    @Override
+    public boolean isControllerLeader(String instanceId) {
+        try (Jedis jedis = getJedis()) {
+            return instanceId != null && instanceId.equals(jedis.get(RedisKeys.CONTROLLER_LEADER));
+        }
+    }
+
+    @Override
+    public void releaseControllerLeadership(String instanceId) {
+        try (Jedis jedis = getJedis()) {
+            jedis.watch(RedisKeys.CONTROLLER_LEADER);
+            String currentLeader = jedis.get(RedisKeys.CONTROLLER_LEADER);
+            if (!instanceId.equals(currentLeader)) {
+                jedis.unwatch();
+                return;
+            }
+
+            Transaction tx = jedis.multi();
+            tx.del(RedisKeys.CONTROLLER_LEADER);
+            tx.exec();
+        }
+    }
+
+    @Override
+    public void updateControllerHeartbeat(String instanceId, String status) {
+        try (Jedis jedis = getJedis()) {
+            jedis.hset(RedisKeys.CONTROLLER_HEARTBEAT, "instanceId", instanceId);
+            jedis.hset(RedisKeys.CONTROLLER_HEARTBEAT, "status", status);
+            jedis.hset(RedisKeys.CONTROLLER_HEARTBEAT, "lastSeen", String.valueOf(System.currentTimeMillis()));
+            jedis.expire(RedisKeys.CONTROLLER_HEARTBEAT, 30);
         }
     }
 

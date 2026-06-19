@@ -70,8 +70,11 @@ public class EventLogWriter {
             return;
         }
 
-        if (MQKeys.CMD_RESET.equals(cmd)) {
-            if (currentSessionId != null) {
+        if (MQKeys.CMD_RESET.equals(cmd) || MQKeys.CMD_TASK_FINISHED.equals(cmd)) {
+            String eventSessionId = data == null ? null : data.getString("sessionId");
+            if (currentSessionId != null
+                    && eventSessionId != null
+                    && eventSessionId.equals(currentSessionId)) {
                 sqlPersistence.endSession(currentSessionId, timestamp);
                 currentSessionId = null;
             }

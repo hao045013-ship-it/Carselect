@@ -27,7 +27,7 @@ public class SnapshotRecorder {
     private String currentSessionId;
     private long lastSqlSnapshotTick = Long.MIN_VALUE;
     private long sessionStartBoardTick = 0L;
-
+    private long lastSqlSnapshotTimestamp = Long.MIN_VALUE;
     public SnapshotRecorder(Blackboard board, MessageQueue mq, SqlReplayPersistence sqlPersistence) {
         this.board = board;
         this.mq = mq;
@@ -64,10 +64,10 @@ public class SnapshotRecorder {
 
         switch (cmd) {
             case MQKeys.CMD_START -> handleStart(data,timestamp);
-            case MQKeys.CMD_RESET -> handleReset(timestamp);
+            case MQKeys.CMD_RESET -> handleReset(data,timestamp);
             case MQKeys.CMD_REFRESH_ALL -> handleRefreshAll(data, timestamp);
             case MQKeys.CMD_MOVED -> handleMoved(data, timestamp);
-            case MQKeys.CMD_TASK_FINISHED -> handleReset(timestamp);
+            case MQKeys.CMD_TASK_FINISHED -> handleReset(data,timestamp);
             default -> {
                 // 其他命令忽略
             }
@@ -76,6 +76,10 @@ public class SnapshotRecorder {
 
     /** START：创建新会话 */
     private void handleStart(JSONObject data,long timestamp) {
+        if (currentSessionId != null) {
+            finishCurrentSession(timestamp);
+        }
+
         // 优先使用 Controller 广播的 sessionId
         String sessionIdFromEvent = data == null ? null : data.getString("sessionId");
         if (sessionIdFromEvent != null && !sessionIdFromEvent.isBlank()) {
@@ -85,6 +89,7 @@ public class SnapshotRecorder {
         }
 
         lastSqlSnapshotTick = Long.MIN_VALUE;
+        lastSqlSnapshotTimestamp = Long.MIN_VALUE;
         sessionStartBoardTick = board.getCurrentTick();
         SimState initialState = null;
         String initialStateJson = data == null ? null : data.getString("initialStateJson");
@@ -108,17 +113,36 @@ public class SnapshotRecorder {
         board.saveSnapshot(stateJson);
         persistSqlSnapshot(timestamp, 0L, initialState);
     }
-
+    //新增
     /** RESET：结束当前会话 */
-    private void handleReset(long timestamp) {
-        if (currentSessionId != null) {
-            sqlPersistence.endSession(currentSessionId, timestamp);
-            currentSessionId = null;
+    private void handleReset(JSONObject data, long timestamp) {
+        if (currentSessionId == null) {
+            return;
         }
+
+        String eventSessionId = data == null ? null : data.getString("sessionId");
+
+        // 关键：没有 sessionId 的 RESET 只能重置系统，不能结束/修改回放记录
+        if (eventSessionId == null || eventSessionId.isBlank()) {
+            return;
+        }
+
+        if (!eventSessionId.equals(currentSessionId)) {
+            return;
+        }
+
+        finishCurrentSession(timestamp);
     }
 
     /** REFRESH_ALL：保存完整状态快照 */
     private void handleRefreshAll(JSONObject data, long timestamp) {
+        if (currentSessionId == null) {
+            return;
+        }
+        String eventSessionId = data == null ? null : data.getString("sessionId");
+        if (eventSessionId == null || !eventSessionId.equals(currentSessionId)) {
+            return;
+        }
         SimState simState = null;
         String stateJsonFromEvent = data == null ? null : data.getString("stateJson");
         if (stateJsonFromEvent != null && !stateJsonFromEvent.isBlank()) {
@@ -169,6 +193,23 @@ public class SnapshotRecorder {
                     currentSessionId, timestamp, "MOVE", carId, x, y, extra.toJSONString());
         }
     }
+    private void finishCurrentSession(long fallbackTimestamp) {
+        if (currentSessionId == null) {
+            return;
+        }
+
+        long endTime;
+        if (lastSqlSnapshotTimestamp != Long.MIN_VALUE) {
+            endTime = lastSqlSnapshotTimestamp;
+        } else {
+            endTime = fallbackTimestamp;
+        }
+
+        sqlPersistence.endSession(currentSessionId, endTime);
+        currentSessionId = null;
+        lastSqlSnapshotTick = Long.MIN_VALUE;
+        lastSqlSnapshotTimestamp = Long.MIN_VALUE;
+    }
 
     private long toReplayTick(long boardTick) {
         return Math.max(0L, boardTick - sessionStartBoardTick);
@@ -181,6 +222,7 @@ public class SnapshotRecorder {
         double coverage = simState.getExploredPercent() / 100.0;
         sqlPersistence.insertSnapshot(currentSessionId, timestamp, tick, coverage, simState.toJson());
         lastSqlSnapshotTick = tick;
+        lastSqlSnapshotTimestamp = timestamp;
     }
 
     private void normalizeInitialState(SimState state) {
@@ -201,7 +243,7 @@ public class SnapshotRecorder {
                 car.setStepsWalked(0);
 
                 if (start != null) {
-                    markInitialVision(initialMapView, width, height, start);
+                    markInitialVision(initialMapView, state.getStaticBlock(), width, height, start);
                     int idx = start.getY() * width + start.getX();
                     if (idx >= 0 && idx < initialDynamicBlock.length) {
                         initialDynamicBlock[idx] = true;
@@ -244,16 +286,41 @@ public class SnapshotRecorder {
         return best == null ? fallback : best;
     }
 
-    private void markInitialVision(boolean[] mapView, int width, int height, Position center) {
+    private void markInitialVision(boolean[] mapView, boolean[] staticBlock, int width, int height, Position center) {
         for (int dy = -RedisKeys.VISION_RANGE; dy <= RedisKeys.VISION_RANGE; dy++) {
             for (int dx = -RedisKeys.VISION_RANGE; dx <= RedisKeys.VISION_RANGE; dx++) {
                 int x = center.getX() + dx;
                 int y = center.getY() + dy;
-                if (x >= 0 && x < width && y >= 0 && y < height) {
+                if (canRevealInitialCell(staticBlock, width, height, center.getX(), center.getY(), x, y)) {
                     mapView[y * width + x] = true;
                 }
             }
         }
+    }
+
+    private boolean canRevealInitialCell(boolean[] staticBlock, int width, int height,
+                                         int centerX, int centerY, int targetX, int targetY) {
+        if (targetX < 0 || targetX >= width || targetY < 0 || targetY >= height) {
+            return false;
+        }
+
+        int dx = targetX - centerX;
+        int dy = targetY - centerY;
+        if (Math.abs(dx) == 1 && Math.abs(dy) == 1) {
+            boolean horizontalBlocked = isInitialStaticBlocked(staticBlock, width, height, centerX + dx, centerY);
+            boolean verticalBlocked = isInitialStaticBlocked(staticBlock, width, height, centerX, centerY + dy);
+            return !(horizontalBlocked && verticalBlocked);
+        }
+
+        return true;
+    }
+
+    private boolean isInitialStaticBlocked(boolean[] staticBlock, int width, int height, int x, int y) {
+        if (staticBlock == null || x < 0 || x >= width || y < 0 || y >= height) {
+            return false;
+        }
+        int index = y * width + x;
+        return index >= 0 && index < staticBlock.length && staticBlock[index];
     }
 
     /**

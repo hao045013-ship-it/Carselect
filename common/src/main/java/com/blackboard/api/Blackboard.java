@@ -53,6 +53,7 @@ public interface Blackboard {
 
     // ==================== 地图视野 ====================
     void exploreCell(int row, int col);
+    void revealVision(int centerX, int centerY, int radius);
     boolean isExplored(int row, int col);
     boolean[] getFullMapView();
 
@@ -108,6 +109,10 @@ public interface Blackboard {
     List<String> getOnlineCars();
     void unregisterCar(String carId);
     long getCarCount();
+    void registerCarInfo(String carId, int row, int col, String status);
+    void heartbeatCar(String carId, String status);
+    void registerKnowledgeSource(String agentId, String type, String status);
+    void heartbeatKnowledgeSource(String agentId, String status);
 
     // ==================== 日志 ====================
     void addLogEntry(String entry);
@@ -125,6 +130,11 @@ public interface Blackboard {
 
     // ==================== 原子操作 ====================
     boolean atomicMove(String carId, int oldX, int oldY, int newX, int newY, int visionRadius);
+    boolean acquireControllerLeadership(String instanceId, int ttlSeconds);
+    boolean refreshControllerLeadership(String instanceId, int ttlSeconds);
+    boolean isControllerLeader(String instanceId);
+    void releaseControllerLeadership(String instanceId);
+    void updateControllerHeartbeat(String instanceId, String status);
 
     // ==================== 工具 ====================
     double getExploredPercent();

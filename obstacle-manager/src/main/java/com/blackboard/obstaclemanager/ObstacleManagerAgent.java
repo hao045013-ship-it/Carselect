@@ -6,12 +6,15 @@ import com.blackboard.api.Blackboard;
 import com.blackboard.api.MessageQueue;
 import com.blackboard.constant.MQKeys;
 
+import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 public class ObstacleManagerAgent {
 
     private final Blackboard board;
     private final MessageQueue mq;
+    private final String agentId = "obstacle-manager-" + UUID.randomUUID();
 
     public ObstacleManagerAgent(Blackboard board, MessageQueue mq) {
         this.board = board;
@@ -19,7 +22,17 @@ public class ObstacleManagerAgent {
     }
 
     public void start() {
+        registerKnowledgeSource();
         mq.subscribeObstacle(this::handleMessage);
+    }
+
+    private void registerKnowledgeSource() {
+        Map<String, Object> data = new HashMap<>();
+        data.put("entityType", "KNOWLEDGE_SOURCE");
+        data.put("agentId", agentId);
+        data.put("type", "OBSTACLE_MANAGER");
+        data.put("status", "ONLINE");
+        mq.sendToQueue(MQKeys.REGISTRY_CMD, MQKeys.CMD_REGISTER, data);
     }
 
     private void handleMessage(String messageJson) {

@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 
 /**
@@ -40,6 +41,7 @@ public class NavigatorAgent {
     private final MessageQueue mq;
     private final RoutePlannerService plannerService;
     private final NavigatorDataReader reader;
+    private final String agentId = "navigator-" + UUID.randomUUID();
 
     public NavigatorAgent(Blackboard board, MessageQueue mq) {
         this.board = board;
@@ -50,8 +52,18 @@ public class NavigatorAgent {
 
     public void start() {
         mq.connect();
+        registerKnowledgeSource();
         mq.subscribeNavigator(this::handleMessageSafely);
         log.info("NavigatorAgent started. Waiting for {} messages.", MQKeys.CMD_PLAN_ROUTE);
+    }
+
+    private void registerKnowledgeSource() {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("entityType", "KNOWLEDGE_SOURCE");
+        data.put("agentId", agentId);
+        data.put("type", "NAVIGATOR");
+        data.put("status", "ONLINE");
+        mq.sendToQueue(MQKeys.REGISTRY_CMD, MQKeys.CMD_REGISTER, data);
     }
 
     private void handleMessageSafely(String rawMessage) {

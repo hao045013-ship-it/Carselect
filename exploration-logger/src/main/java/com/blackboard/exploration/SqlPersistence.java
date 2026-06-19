@@ -51,7 +51,7 @@ public class SqlPersistence {
         if (connection == null) {
             return;
         }
-        String sql = "UPDATE session SET end_time = ? WHERE session_id = ?";
+        String sql = "UPDATE session SET end_time = ? WHERE session_id = ? AND end_time IS NULL";
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setLong(1, endTime);
             ps.setString(2, sessionId);

@@ -12,11 +12,13 @@ import com.blackboard.model.TaskStatus;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 public class TaskConfiguratorAgent {
 
     private final Blackboard board;
     private final MessageQueue mq;
+    private final String agentId = "task-configurator-" + UUID.randomUUID();
 
     public TaskConfiguratorAgent(Blackboard board, MessageQueue mq) {
         this.board = board;
@@ -24,7 +26,17 @@ public class TaskConfiguratorAgent {
     }
 
     public void start() {
+        registerKnowledgeSource();
         mq.subscribeTaskConfig(this::handleMessage);
+    }
+
+    private void registerKnowledgeSource() {
+        Map<String, Object> data = new HashMap<>();
+        data.put("entityType", "KNOWLEDGE_SOURCE");
+        data.put("agentId", agentId);
+        data.put("type", "TASK_CONFIGURATOR");
+        data.put("status", "ONLINE");
+        mq.sendToQueue(MQKeys.REGISTRY_CMD, MQKeys.CMD_REGISTER, data);
     }
 
     private void handleMessage(String messageJson) {
@@ -148,23 +160,21 @@ public class TaskConfiguratorAgent {
         board.appendTrace(carId, 0L, x, y);
 
         illuminateInitialArea(x, y);
+        registerCarWithRegistry(carId, y, x);
     }
 
     private void illuminateInitialArea(int x, int y) {
-        int radius = RedisKeys.VISION_RANGE;
+        board.revealVision(x, y, RedisKeys.VISION_RANGE);
+    }
 
-        for (int dy = -radius; dy <= radius; dy++) {
-            for (int dx = -radius; dx <= radius; dx++) {
-                int nx = x + dx;
-                int ny = y + dy;
-
-                if (nx >= 0 && nx < board.getMapWidth()
-                        && ny >= 0 && ny < board.getMapHeight()) {
-                    // exploreCell 参数顺序是 (row, col)，即 (ny, nx)
-                    board.exploreCell(ny, nx);
-                }
-            }
-        }
+    private void registerCarWithRegistry(String carId, int row, int col) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("entityType", "CAR");
+        data.put("carId", carId);
+        data.put("row", row);
+        data.put("col", col);
+        data.put("status", CarStatus.IDLE.name());
+        mq.sendToQueue(MQKeys.REGISTRY_CMD, MQKeys.CMD_REGISTER, data);
     }
 
     private void handleForwardReset() {
@@ -198,7 +208,7 @@ public class TaskConfiguratorAgent {
                 for (int x = 0; x < row.size(); x++) {
                     int val = row.getIntValue(x);
                     if (val == 1) {
-                        // setStaticBlock 参数顺序是 (row, col)，即 (y, x)
+                        // setStaticBlock uses (row, col), so pass (y, x).
                         board.setStaticBlock(y, x, true);
                     }
                 }

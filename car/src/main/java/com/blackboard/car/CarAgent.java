@@ -4,17 +4,24 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.blackboard.api.Blackboard;
 import com.blackboard.api.MessageQueue;
+import com.blackboard.constant.MQKeys;
 import com.blackboard.constant.RedisKeys;
 import com.blackboard.model.CarStatus;
 import com.blackboard.model.Position;
 
+import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 public class CarAgent {
 
     private final String carId;
     private final Blackboard board;
     private final MessageQueue mq;
+    private final ScheduledExecutorService heartbeatScheduler =
+            Executors.newSingleThreadScheduledExecutor();
 
     public CarAgent(String carId, Blackboard board, MessageQueue mq) {
         this.carId = carId;
@@ -24,7 +31,29 @@ public class CarAgent {
 
     public void start() {
         mq.subscribeCar(carId, this::handleMessage);
+        sendHeartbeat();
+        heartbeatScheduler.scheduleAtFixedRate(this::sendHeartbeatSafely, 5, 5, TimeUnit.SECONDS);
         System.out.println(carId + " subscribed.");
+    }
+
+    public void stop() {
+        heartbeatScheduler.shutdownNow();
+    }
+
+    private void sendHeartbeatSafely() {
+        try {
+            sendHeartbeat();
+        } catch (Exception e) {
+            System.err.println(carId + " registry heartbeat failed: " + e.getMessage());
+        }
+    }
+
+    private void sendHeartbeat() {
+        Map<String, Object> data = new HashMap<>();
+        data.put("entityType", "CAR");
+        data.put("carId", carId);
+        data.put("status", board.getStatus(carId));
+        mq.sendToQueue(MQKeys.REGISTRY_CMD, MQKeys.CMD_HEARTBEAT, data);
     }
 
     private void handleMessage(String messageJson) {

@@ -20,6 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 
 /**
@@ -37,6 +38,7 @@ public class TargetPlannerAgent {
     private final Blackboard board;
     private final MessageQueue mq;
     private final TargetPlannerService plannerService;
+    private final String agentId = "target-planner-" + UUID.randomUUID();
 
     public TargetPlannerAgent(Blackboard board, MessageQueue mq) {
         this.board = board;
@@ -46,9 +48,19 @@ public class TargetPlannerAgent {
 
     public void start() {
         mq.connect();
+        registerKnowledgeSource();
         mq.subscribeTargetPlanner(this::handleMessageSafely);
         log.info("TargetPlannerAgent started. Waiting for {} / {} messages.",
                 MQKeys.CMD_ASSIGN_TARGET, MQKeys.CMD_ASSIGN_TARGETS);
+    }
+
+    private void registerKnowledgeSource() {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("entityType", "KNOWLEDGE_SOURCE");
+        data.put("agentId", agentId);
+        data.put("type", "TARGET_PLANNER");
+        data.put("status", "ONLINE");
+        mq.sendToQueue(MQKeys.REGISTRY_CMD, MQKeys.CMD_REGISTER, data);
     }
 
     private void handleMessageSafely(String rawMessage) {
