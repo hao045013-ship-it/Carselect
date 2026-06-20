@@ -59,14 +59,15 @@ public class StatsCollector {
         JSONObject root = JSONObject.parseObject(message);
         String cmd = root.getString("cmd");
         long timestamp = root.getLongValue("timestamp");
+        JSONObject data = root.getJSONObject("data");
 
         if (cmd == null) {
             return;
         }
 
         switch (cmd) {
-            case MQKeys.CMD_START -> handleStart(timestamp);
-            case MQKeys.CMD_REFRESH_ALL -> handleRefreshAll(timestamp);
+            case MQKeys.CMD_START -> handleStart(timestamp, data);
+            case MQKeys.CMD_REFRESH_ALL -> handleRefreshAll(timestamp, data);
             case MQKeys.CMD_RESET -> handleReset(timestamp);
             default -> {
                 // 其他命令忽略
@@ -74,9 +75,9 @@ public class StatsCollector {
         }
     }
 
-    /** START：关联最新会话，重置本地缓存 */
-    private void handleStart(long timestamp) {
-        currentSessionId = sqlPersistence.getLatestSessionId();
+    /** START：从消息体直接取 sessionId（避免查库竞态），重置本地缓存 */
+    private void handleStart(long timestamp, JSONObject data) {
+        currentSessionId = (data != null) ? data.getString("sessionId") : null;
         sessionStartTime = timestamp;
         sessionFinalized = false;
         lastStepSnapshot.clear();
@@ -84,7 +85,24 @@ public class StatsCollector {
     }
 
     /** REFRESH_ALL：汇总统计、预测、写黑板与数据库 */
-    private void handleRefreshAll(long timestamp) {
+    private void handleRefreshAll(long timestamp, JSONObject data) {
+        // 兜底：如果错过了START消息，从REFRESH_ALL消息里取sessionId
+        if (currentSessionId == null && data != null) {
+            String sid = data.getString("sessionId");
+            if (sid != null && !sid.isBlank()) {
+                currentSessionId = sid;
+                sessionStartTime = timestamp;
+            }
+        }
+
+        // 验证消息中的sessionId与当前会话一致（切到下一轮仿真时跳过旧消息）
+        if (currentSessionId != null && data != null) {
+            String msgSid = data.getString("sessionId");
+            if (msgSid != null && !msgSid.isBlank() && !msgSid.equals(currentSessionId)) {
+                return; // 旧会话的残留消息，忽略
+            }
+        }
+
         double exploredPercent = board.getExploredPercent();
         long tick = board.getCurrentTick();
         int mapWidth = board.getMapWidth();

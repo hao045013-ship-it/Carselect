@@ -1934,6 +1934,18 @@ function formatStatsSessionLabel(session) {
 }
 
 function loadStatsSession(sessionId) {
+    // 先清空旧数据，防止残留
+    DOM.statsCoverage.textContent = '--';
+    DOM.statsTotalMoves.textContent = '--';
+    DOM.statsTotalBlocked.textContent = '--';
+    DOM.statsBlockedRate.textContent = '--';
+    DOM.statsDuration.textContent = '--';
+    DOM.statsNavEfficiency.textContent = '--';
+    DOM.statsPredictConfidence.textContent = '--';
+    DOM.statsPredictConfidence.style.color = '#888888';
+    clearStatsCanvas(DOM.statsCoverageCanvas, DOM.statsCoverageWrap);
+    clearStatsCanvas(DOM.statsCarCanvas, DOM.statsCarWrap);
+
     // 并行拉取四个接口
     fetch(STATS_API_BASE + '/sessions/' + encodeURIComponent(sessionId) + '/overview')
         .then(function (res) { return res.json(); })
@@ -1957,7 +1969,15 @@ function loadStatsSession(sessionId) {
 }
 
 function renderStatsOverview(data) {
-    if (!data || Object.keys(data).length === 0) return;
+    if (!data || Object.keys(data).length === 0) {
+        DOM.statsCoverage.textContent = '--';
+        DOM.statsTotalMoves.textContent = '--';
+        DOM.statsTotalBlocked.textContent = '--';
+        DOM.statsBlockedRate.textContent = '--';
+        DOM.statsDuration.textContent = '--';
+        DOM.statsNavEfficiency.textContent = '--';
+        return;
+    }
 
     var coverageRate = data.coverageRate != null ? data.coverageRate : 0;
     var totalMoves = data.totalMoves != null ? data.totalMoves : 0;
@@ -2202,6 +2222,20 @@ function renderCarContribution(data) {
         ctx.textAlign = 'left';
         ctx.fillText(item.label, lx + 14, legendY + 10);
     });
+}
+
+function clearStatsCanvas(canvas, wrap) {
+    var dpr = window.devicePixelRatio || 1;
+    var w = wrap.clientWidth;
+    var h = wrap.clientHeight;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    var ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = '#061529';
+    ctx.fillRect(0, 0, w, h);
 }
 
 // ==================== 多会话对比 ====================
