@@ -35,6 +35,18 @@ public class SqlReplayPersistence {
         if (connection == null) {
             return;
         }
+        // 确保 operator_id 列存在
+        String alterSql = "IF NOT EXISTS (SELECT 1 FROM sys.columns "
+                + "WHERE name = 'operator_id' AND object_id = OBJECT_ID('dbo.session')) "
+                + "BEGIN "
+                + "ALTER TABLE dbo.session ADD operator_id VARCHAR(50) NULL "
+                + "END";
+        try (PreparedStatement ps = connection.prepareStatement(alterSql)) {
+            ps.execute();
+        } catch (SQLException e) {
+            System.err.println("[SqlReplayPersistence] 添加 operator_id 列失败: " + e.getMessage());
+        }
+        // 确保索引存在
         String sql = "IF OBJECT_ID('dbo.snapshot', 'U') IS NOT NULL "
                 + "AND NOT EXISTS ("
                 + "SELECT 1 FROM sys.indexes "
@@ -53,18 +65,34 @@ public class SqlReplayPersistence {
     /**
      * 创建新的回放会话记录
      */
-    public void startSession(String sessionId, long startTime, int mapWidth, int mapHeight, int carCount) {
-        String sql = "INSERT INTO session(session_id, start_time, map_width, map_height, car_count) "
-                + "VALUES (?, ?, ?, ?, ?)";
+    public void startSession(String sessionId, long startTime, int mapWidth, int mapHeight, int carCount, String operatorId) {
+        // 先尝试写入 operator_id（列可能不存在）
+        String sql = "INSERT INTO session(session_id, start_time, map_width, map_height, car_count, operator_id) "
+                + "VALUES (?, ?, ?, ?, ?, ?)";
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setString(1, sessionId);
             ps.setLong(2, startTime);
             ps.setInt(3, mapWidth);
             ps.setInt(4, mapHeight);
             ps.setInt(5, carCount);
+            ps.setString(6, operatorId);
             ps.executeUpdate();
+            return;
         } catch (SQLException e) {
-            e.printStackTrace();
+            System.err.println("[SqlReplayPersistence] operator_id 列不存在，回退写入: " + e.getMessage());
+        }
+        // 回退：不加 operator_id
+        String fallback = "INSERT INTO session(session_id, start_time, map_width, map_height, car_count) "
+                + "VALUES (?, ?, ?, ?, ?)";
+        try (PreparedStatement ps = connection.prepareStatement(fallback)) {
+            ps.setString(1, sessionId);
+            ps.setLong(2, startTime);
+            ps.setInt(3, mapWidth);
+            ps.setInt(4, mapHeight);
+            ps.setInt(5, carCount);
+            ps.executeUpdate();
+        } catch (SQLException e2) {
+            e2.printStackTrace();
         }
     }
 
@@ -162,13 +190,7 @@ public class SqlReplayPersistence {
 
         try {
             long total = 0;
-            String countSql = """
-                    SELECT COUNT(*)
-                    FROM session s
-                    WHERE EXISTS (
-                        SELECT 1 FROM snapshot sn WHERE sn.session_id = s.session_id
-                    )
-                    """;
+            String countSql = "SELECT COUNT(*) FROM session";
             try (PreparedStatement ps = connection.prepareStatement(countSql);
                  ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
@@ -178,11 +200,8 @@ public class SqlReplayPersistence {
 
             List<Map<String, Object>> sessions = new ArrayList<>();
             String sql = """
-                    SELECT s.session_id, s.start_time, s.end_time, s.car_count, s.note
+                    SELECT s.session_id, s.start_time, s.end_time, s.car_count, s.note, s.operator_id
                     FROM session s
-                    WHERE EXISTS (
-                        SELECT 1 FROM snapshot sn WHERE sn.session_id = s.session_id
-                    )
                     ORDER BY s.start_time DESC
                     OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
                     """;
@@ -198,6 +217,7 @@ public class SqlReplayPersistence {
                         row.put("endTime", rs.wasNull() ? null : endTime);
                         row.put("carCount", rs.getInt("car_count"));
                         row.put("note", rs.getString("note"));
+                        row.put("operatorId", rs.getString("operator_id"));
                         sessions.add(row);
                     }
                 }

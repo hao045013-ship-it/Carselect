@@ -28,16 +28,17 @@ public class SqlPersistence {
     /**
      * 创建新的探索会话记录
      */
-    public void startSession(String sessionId, long startTime, int carCount) {
+    public void startSession(String sessionId, long startTime, int carCount, String operatorId) {
         if (connection == null) {
             return;
         }
-        String sql = "INSERT INTO session(session_id, start_time, map_width, map_height, car_count) "
-                + "VALUES (?, ?, 30, 30, ?)";
+        String sql = "INSERT INTO session(session_id, start_time, map_width, map_height, car_count, operator_id) "
+                + "VALUES (?, ?, 30, 30, ?, ?)";
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setString(1, sessionId);
             ps.setLong(2, startTime);
             ps.setInt(3, carCount);
+            ps.setString(4, operatorId);
             ps.executeUpdate();
         } catch (SQLException e) {
             e.printStackTrace();

@@ -20,8 +20,32 @@ public class SqlStatsPersistence {
     public SqlStatsPersistence(String url, String username, String password) {
         try {
             connection = DriverManager.getConnection(url, username, password);
+            ensureTables();
         } catch (SQLException e) {
             e.printStackTrace();
+        }
+    }
+
+    private void ensureTables() {
+        if (connection == null) return;
+        String sql1 = "IF OBJECT_ID('dbo.session_stats', 'U') IS NULL "
+                + "CREATE TABLE dbo.session_stats ("
+                + "session_id VARCHAR(50) PRIMARY KEY, "
+                + "total_cells INT, explored_cells INT, "
+                + "coverage_rate FLOAT, total_moves INT, total_blocked INT, "
+                + "total_nav_count INT, avg_nav_efficiency FLOAT, "
+                + "per_car_stats_json VARCHAR(MAX), duration_ms BIGINT, "
+                + "updated_at BIGINT)";
+        String sql2 = "IF OBJECT_ID('dbo.coverage_curve', 'U') IS NULL "
+                + "CREATE TABLE dbo.coverage_curve ("
+                + "session_id VARCHAR(50), ts BIGINT, tick BIGINT, "
+                + "coverage FLOAT, explored_cells INT)";
+        try {
+            try (PreparedStatement ps = connection.prepareStatement(sql1)) { ps.execute(); }
+            try (PreparedStatement ps = connection.prepareStatement(sql2)) { ps.execute(); }
+            System.out.println("[SqlStatsPersistence] 统计表已就绪");
+        } catch (SQLException e) {
+            System.err.println("[SqlStatsPersistence] 建表失败: " + e.getMessage());
         }
     }
 
@@ -299,7 +323,7 @@ public class SqlStatsPersistence {
             }
 
             List<Map<String, Object>> sessions = new ArrayList<>();
-            String sql = "SELECT s.session_id, s.start_time, s.end_time, "
+            String sql = "SELECT s.session_id, s.start_time, s.end_time, s.operator_id, "
                     + "ss.coverage_rate, ss.duration_ms "
                     + "FROM session s LEFT JOIN session_stats ss ON s.session_id = ss.session_id "
                     + "ORDER BY s.start_time DESC OFFSET ? ROWS FETCH NEXT ? ROWS ONLY";
@@ -313,6 +337,7 @@ public class SqlStatsPersistence {
                         row.put("startTime", rs.getLong("start_time"));
                         long endTime = rs.getLong("end_time");
                         row.put("endTime", rs.wasNull() ? null : endTime);
+                        row.put("operatorId", rs.getString("operator_id"));
                         double coverage = rs.getDouble("coverage_rate");
                         row.put("coverageRate", rs.wasNull() ? null : coverage);
                         long duration = rs.getLong("duration_ms");

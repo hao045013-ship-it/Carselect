@@ -172,7 +172,7 @@ public class ControllerAgent {
                     break;
 
                 case MQKeys.CMD_START:
-                    handleStart();
+                    handleStart(data);
                     break;
 
                 case MQKeys.CMD_PAUSE:
@@ -318,7 +318,7 @@ public class ControllerAgent {
         }
     }
 
-    private void handleStart() {
+    private void handleStart(JSONObject data) {
         purgeSimulationCommandQueues(board.getCarList().size());
         clearSchedulingRequests();
         // 生成 sessionId
@@ -328,6 +328,9 @@ public class ControllerAgent {
         if (config == null) {
             config = new HashMap<>();
         }
+
+        // 提取前端传来的操作员ID
+        String operatorId = data != null ? data.getString("operatorId") : null;
 
         board.setCurrentTick(0L);
         config.put("taskStatus", TaskStatus.INIT.name());
@@ -342,6 +345,9 @@ public class ControllerAgent {
         Map<String, Object> startData = new HashMap<>();
         startData.put("tick", 0L);
         startData.put("sessionId", currentSessionId);
+        if (operatorId != null && !operatorId.isBlank()) {
+            startData.put("operatorId", operatorId);
+        }
         startData.put("initialStateJson", initialStateJson);
 
         mq.broadcastEvent(MQKeys.CMD_START, startData);

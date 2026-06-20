@@ -106,7 +106,13 @@ public class SnapshotRecorder {
         int mapWidth = board.getMapWidth();
         int mapHeight = board.getMapHeight();
         int carCount = board.getCarList().size();
-        sqlPersistence.startSession(currentSessionId, timestamp, mapWidth, mapHeight, carCount);
+        // 优先从事件数据中取 operatorId，fallback 到 Redis
+        String operatorId = data != null ? data.getString("operatorId") : null;
+        if (operatorId == null || operatorId.isBlank()) {
+            operatorId = board.getCurrentUser();
+        }
+        System.out.println("[SnapshotRecorder] 新会话 operatorId=" + operatorId + " sessionId=" + currentSessionId);
+        sqlPersistence.startSession(currentSessionId, timestamp, mapWidth, mapHeight, carCount, operatorId);
         //SimState initialState = buildSimState();
         // normalizeInitialState(initialState);   // 已删除
         String stateJson = initialState.toJson();

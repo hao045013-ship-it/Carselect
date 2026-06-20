@@ -109,10 +109,14 @@ public class SimWebSocketServer extends WebSocketServer {
         switch (cmd) {
             case "SET_CONFIG" -> SimpleBridge.setConfig(toConfigMap(data));
             case "START" -> {
-                if (data != null && !data.isEmpty()) {
-                    SimpleBridge.setConfig(toConfigMap(data));
+                Map<String, Object> startData = new HashMap<>();
+                if (data != null) {
+                    String operatorId = data.getString("operatorId");
+                    if (operatorId != null && !operatorId.isBlank()) {
+                        startData.put("operatorId", operatorId);
+                    }
                 }
-                SimpleBridge.sendCommand("START");
+                SimpleBridge.sendCommand("START", startData);
             }
             case "ADD_CAR" -> {
                 if (data == null) {

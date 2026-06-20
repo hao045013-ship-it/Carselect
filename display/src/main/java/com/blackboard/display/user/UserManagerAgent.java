@@ -112,6 +112,7 @@ public class UserManagerAgent {
         String role = data != null ? data.getString("role") : null;
         if (nickname == null || nickname.trim().isEmpty()) return error("昵称不能为空");
         if (password == null || password.length() < 6) return error("密码至少需要6位");
+        if (!isStrongPassword(password)) return error("密码强度不足：需包含大写字母、小写字母、数字、特殊字符中的至少三种");
         if (role == null || role.trim().isEmpty()) role = "analyst";
         nickname = nickname.trim();
         role = role.trim();
@@ -407,6 +408,7 @@ public class UserManagerAgent {
         String newPwd = data != null ? data.getString("newPassword") : null;
         if (oldPwd == null || oldPwd.isEmpty()) return error("请输入当前密码");
         if (newPwd == null || newPwd.length() < 6) return error("新密码至少6位");
+        if (!isStrongPassword(newPwd)) return error("密码强度不足：需包含大写字母、小写字母、数字、特殊字符中的至少三种");
 
         // 验证旧密码
         String sql = "SELECT prefs_json FROM dbo.users WHERE user_id = ?";
@@ -440,6 +442,19 @@ public class UserManagerAgent {
         Map<String, Object> r = new HashMap<>();
         r.put("message", "密码修改成功");
         return ok(r);
+    }
+
+    // ==================== 密码强度 ====================
+
+    /** 密码需包含大写、小写、数字、特殊字符中的至少三种 */
+    private static boolean isStrongPassword(String pwd) {
+        if (pwd == null) return false;
+        int types = 0;
+        if (pwd.matches(".*[A-Z].*")) types++;
+        if (pwd.matches(".*[a-z].*")) types++;
+        if (pwd.matches(".*[0-9].*")) types++;
+        if (pwd.matches(".*[^A-Za-z0-9].*")) types++;
+        return types >= 3;
     }
 
     // ==================== 密码哈希 ====================

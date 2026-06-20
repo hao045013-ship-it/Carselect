@@ -152,7 +152,7 @@
                 <div class="param-row">
                     <label>随机障碍密度</label>
                     <div class="range-with-value">
-                        <input type="range" id="obstacleDensity" min="0" max="40" value="5" step="1">
+                        <input type="range" id="obstacleDensity" min="0" max="20" value="5" step="1">
                         <span class="range-value" id="densityValue">5%</span>
                     </div>
                 </div>
@@ -278,7 +278,7 @@
                 <span>覆盖率 <b class="mono" id="replayCoverage">0%</b></span>
                 <span>步数 <b class="mono" id="replaySteps">0</b></span>
                 <span>Tick <b class="mono" id="replayTick">0</b></span>
-                <span>会话ID <b class="mono" id="replaySessionId" style="font-size:9px;">--</b></span>
+                <span>操作员 <b class="mono" id="replaySessionId" style="font-size:9px;">--</b></span>
             </div>
         </div>
 
@@ -292,6 +292,7 @@
                 <select id="statsSessionSelect" class="sim-select" style="flex:1;max-width:280px;">
                     <option value="">-- 选择会话 --</option>
                 </select>
+                <span>操作员 <b class="mono" id="statsOperatorId" style="font-size:9px;">--</b></span>
             </div>
             <div class="stats-content" style="display:flex;flex-direction:column;gap:14px;padding:14px;overflow-y:auto;flex:1;">
                 <!-- 概览卡片 -->
