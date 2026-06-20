@@ -180,6 +180,14 @@ function cacheDomReferences() {
     DOM.statsCoverageWrap = document.getElementById('statsCoverageWrap');
     DOM.statsCarCanvas = document.getElementById('statsCarCanvas');
     DOM.statsCarWrap = document.getElementById('statsCarWrap');
+    DOM.statsCompareSelect = document.getElementById('statsCompareSelect');
+    DOM.statsCompareBtn = document.getElementById('statsCompareBtn');
+    DOM.statsCompareCanvas = document.getElementById('statsCompareCanvas');
+    DOM.statsCompareWrap = document.getElementById('statsCompareWrap');
+    DOM.statsHeatmapBtn = document.getElementById('statsHeatmapBtn');
+    DOM.statsHeatmapCanvas = document.getElementById('statsHeatmapCanvas');
+    DOM.statsHeatmapWrap = document.getElementById('statsHeatmapWrap');
+    DOM.statsHeatmapTooltip = document.getElementById('statsHeatmapTooltip');
 
     // 系统设置
     DOM.settingsPanel = document.getElementById('settingsPanel');
@@ -2054,6 +2062,7 @@ function refreshStatsSessions() {
             if (sessions.length === 0) {
                 sel.innerHTML += '<option value="" disabled>暂无历史会话</option>';
             }
+            initStatsCompareSelect();
         })
         .catch(function () {
             addLog('warn', '未连接到统计分析服务 8085');
@@ -2068,6 +2077,14 @@ function refreshStatsSessions() {
             if (sid) loadStatsSession(sid);
         });
     }
+
+    // 绑定热力图按钮（仅一次）
+    if (!DOM.statsHeatmapBtn._wired) {
+        DOM.statsHeatmapBtn._wired = true;
+        DOM.statsHeatmapBtn.addEventListener('click', function () {
+            loadHeatmap(sel.value);
+        });
+    }
 }
 
 function formatStatsSessionLabel(session) {
@@ -2077,6 +2094,18 @@ function formatStatsSessionLabel(session) {
 }
 
 function loadStatsSession(sessionId) {
+    // 先清空旧数据，防止残留
+    DOM.statsCoverage.textContent = '--';
+    DOM.statsTotalMoves.textContent = '--';
+    DOM.statsTotalBlocked.textContent = '--';
+    DOM.statsBlockedRate.textContent = '--';
+    DOM.statsDuration.textContent = '--';
+    DOM.statsNavEfficiency.textContent = '--';
+    DOM.statsPredictConfidence.textContent = '--';
+    DOM.statsPredictConfidence.style.color = '#888888';
+    clearStatsCanvas(DOM.statsCoverageCanvas, DOM.statsCoverageWrap);
+    clearStatsCanvas(DOM.statsCarCanvas, DOM.statsCarWrap);
+
     // 并行拉取四个接口
     fetch(STATS_API_BASE + '/sessions/' + encodeURIComponent(sessionId) + '/overview')
         .then(function (res) { return res.json(); })
@@ -2100,7 +2129,15 @@ function loadStatsSession(sessionId) {
 }
 
 function renderStatsOverview(data) {
-    if (!data || Object.keys(data).length === 0) return;
+    if (!data || Object.keys(data).length === 0) {
+        DOM.statsCoverage.textContent = '--';
+        DOM.statsTotalMoves.textContent = '--';
+        DOM.statsTotalBlocked.textContent = '--';
+        DOM.statsBlockedRate.textContent = '--';
+        DOM.statsDuration.textContent = '--';
+        DOM.statsNavEfficiency.textContent = '--';
+        return;
+    }
 
     var coverageRate = data.coverageRate != null ? data.coverageRate : 0;
     var totalMoves = data.totalMoves != null ? data.totalMoves : 0;
@@ -2336,13 +2373,296 @@ function renderCarContribution(data) {
         { label: 'blocked', color: '#ff4a4a' },
         { label: 'navCount', color: '#4aff7a' }
     ];
-    ctx.font = '8px monospace';
+    ctx.font = '11px monospace';
     legendItems.forEach(function (item, i) {
-        var lx = legendX + i * 70;
+        var lx = legendX + i * 80;
         ctx.fillStyle = item.color;
-        ctx.fillRect(lx, legendY, 8, 8);
+        ctx.fillRect(lx, legendY, 10, 10);
         ctx.fillStyle = '#8899aa';
         ctx.textAlign = 'left';
-        ctx.fillText(item.label, lx + 11, legendY + 8);
+        ctx.fillText(item.label, lx + 14, legendY + 10);
     });
+}
+
+function clearStatsCanvas(canvas, wrap) {
+    var dpr = window.devicePixelRatio || 1;
+    var w = wrap.clientWidth;
+    var h = wrap.clientHeight;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    var ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = '#061529';
+    ctx.fillRect(0, 0, w, h);
+}
+
+// ==================== 多会话对比 ====================
+
+function initStatsCompareSelect() {
+    var src = DOM.statsSessionSelect;
+    var dst = DOM.statsCompareSelect;
+    dst.innerHTML = '';
+    var opts = src.querySelectorAll('option');
+    opts.forEach(function (opt) {
+        if (opt.value) {
+            var clone = document.createElement('option');
+            clone.value = opt.value;
+            clone.textContent = opt.textContent;
+            dst.appendChild(clone);
+        }
+    });
+
+    // 多选点击切换：单击即可选择/取消，无需按 Ctrl
+    if (!dst._toggleWired) {
+        dst._toggleWired = true;
+        dst.addEventListener('mousedown', function (e) {
+            var opt = e.target.closest('option');
+            if (!opt) return;
+            e.preventDefault();
+            opt.selected = !opt.selected;
+            dst.focus();
+            return false;
+        });
+    }
+
+    if (!DOM.statsCompareBtn._wired) {
+        DOM.statsCompareBtn._wired = true;
+        DOM.statsCompareBtn.addEventListener('click', runSessionCompare);
+    }
+}
+
+function runSessionCompare() {
+    var sel = DOM.statsCompareSelect;
+    var selected = [];
+    for (var i = 0; i < sel.options.length; i++) {
+        if (sel.options[i].selected) selected.push(sel.options[i].value);
+    }
+    if (selected.length < 2) {
+        addLog('warn', '请至少选择两个会话');
+        return;
+    }
+    if (selected.length > 5) selected = selected.slice(0, 5);
+
+    var ids = selected.join(',');
+    fetch(STATS_API_BASE + '/sessions/compare?ids=' + encodeURIComponent(ids))
+        .then(function (res) { return res.json(); })
+        .then(function (data) { renderCompareChart(data); })
+        .catch(function (e) { addLog('error', '对比接口失败: ' + e.message); });
+}
+
+function renderCompareChart(data) {
+    var canvas = DOM.statsCompareCanvas;
+    var wrap = DOM.statsCompareWrap;
+    var dpr = window.devicePixelRatio || 1;
+    var w = wrap.clientWidth;
+    var h = wrap.clientHeight;
+
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+
+    var ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    ctx.fillStyle = '#061529';
+    ctx.fillRect(0, 0, w, h);
+
+    var sessions = data.sessions || [];
+    var curves = data.curves || {};
+    if (sessions.length === 0) {
+        ctx.fillStyle = '#667788';
+        ctx.font = '12px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('暂无数据', w / 2, h / 2);
+        return;
+    }
+
+    var margin = { left: 50, right: 20, top: 16, bottom: 28 };
+    var pw = w - margin.left - margin.right;
+    var ph = h - margin.top - margin.bottom;
+
+    var globalMaxTick = 0;
+    var offsets = {};
+    sessions.forEach(function (s) {
+        var pts = curves[s.sessionId] || [];
+        if (pts.length > 0) {
+            var minT = pts[0].tick;
+            var maxT = pts[pts.length - 1].tick;
+            offsets[s.sessionId] = minT;
+            if (maxT - minT > globalMaxTick) globalMaxTick = maxT - minT;
+        }
+    });
+    if (globalMaxTick === 0) globalMaxTick = 1;
+
+    ctx.strokeStyle = '#334455';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(margin.left, margin.top);
+    ctx.lineTo(margin.left, margin.top + ph);
+    ctx.lineTo(margin.left + pw, margin.top + ph);
+    ctx.stroke();
+
+    ctx.fillStyle = '#667788';
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'right';
+    for (var pct = 0; pct <= 100; pct += 25) {
+        var y = margin.top + ph - (pct / 100) * ph;
+        ctx.fillText(pct + '%', margin.left - 6, y + 3);
+        ctx.strokeStyle = '#1a2a3a';
+        ctx.beginPath();
+        ctx.moveTo(margin.left, y);
+        ctx.lineTo(margin.left + pw, y);
+        ctx.stroke();
+    }
+
+    ctx.textAlign = 'center';
+    var xSteps = Math.min(5, globalMaxTick > 0 ? 5 : 1);
+    for (var i = 0; i <= xSteps; i++) {
+        var tickVal = Math.round((i / xSteps) * globalMaxTick);
+        var x = margin.left + (tickVal / globalMaxTick) * pw;
+        ctx.fillText(tickVal, x, margin.top + ph + 14);
+    }
+
+    var palette = ['#4a9eff', '#ff4a4a', '#4aff7a', '#ffaa00', '#cc44ff'];
+
+    sessions.forEach(function (s, si) {
+        var color = palette[si % palette.length];
+        var pts = curves[s.sessionId] || [];
+        if (pts.length === 0) return;
+        var offset = offsets[s.sessionId] || 0;
+
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        for (var j = 0; j < pts.length; j++) {
+            var px = margin.left + ((pts[j].tick - offset) / globalMaxTick) * pw;
+            var py = margin.top + ph - pts[j].coverage * ph;
+            if (j === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+
+        var last = pts[pts.length - 1];
+        var lx = margin.left + ((last.tick - offset) / globalMaxTick) * pw;
+        var ly = margin.top + ph - last.coverage * ph;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(lx, ly, 4, 0, Math.PI * 2);
+        ctx.fill();
+    });
+
+    var legendX = margin.left + pw - 220;
+    var legendY = margin.top + 4;
+    sessions.forEach(function (s, si) {
+        var color = palette[si % palette.length];
+        var label = s.label || s.sessionId || '';
+        if (label.length > 12) label = label.slice(0, 12);
+        var ly = legendY + si * 16;
+        ctx.fillStyle = color;
+        ctx.fillRect(legendX, ly, 10, 10);
+        ctx.fillStyle = '#ccc';
+        ctx.font = '9px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(label, legendX + 14, ly + 9);
+    });
+}
+
+// ==================== 热力图 ====================
+
+function loadHeatmap(sessionId) {
+    if (!sessionId) {
+        addLog('warn', '请先选择会话');
+        return;
+    }
+    fetch(STATS_API_BASE + '/sessions/' + encodeURIComponent(sessionId) + '/heatmap')
+        .then(function (res) { return res.json(); })
+        .then(function (data) { renderHeatmap(data); })
+        .catch(function (e) { addLog('error', '热力图接口失败: ' + e.message); });
+}
+
+function renderHeatmap(data) {
+    var canvas = DOM.statsHeatmapCanvas;
+    var wrap = DOM.statsHeatmapWrap;
+    var dpr = window.devicePixelRatio || 1;
+    var w = wrap.clientWidth;
+    var h = wrap.clientHeight;
+
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+
+    var ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    ctx.fillStyle = '#061529';
+    ctx.fillRect(0, 0, w, h);
+
+    var mapW = data.mapWidth || 1;
+    var mapH = data.mapHeight || 1;
+    var maxCount = data.maxCount || 1;
+    var cells = data.cells || [];
+
+    var cellMap = {};
+    cells.forEach(function (c) {
+        cellMap[c.x + ',' + c.y] = c.count;
+    });
+
+    var cellW = w / mapW;
+    var cellH = h / mapH;
+
+    for (var row = 0; row < mapH; row++) {
+        for (var col = 0; col < mapW; col++) {
+            var count = cellMap[col + ',' + row] || 0;
+            if (count > 0) {
+                var alpha = count / maxCount;
+                ctx.fillStyle = 'rgba(255,74,74,' + alpha.toFixed(2) + ')';
+                ctx.fillRect(col * cellW, row * cellH, cellW, cellH);
+            }
+        }
+    }
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.lineWidth = 0.5;
+    for (var row = 0; row <= mapH; row++) {
+        ctx.beginPath();
+        ctx.moveTo(0, row * cellH);
+        ctx.lineTo(w, row * cellH);
+        ctx.stroke();
+    }
+    for (var col = 0; col <= mapW; col++) {
+        ctx.beginPath();
+        ctx.moveTo(col * cellW, 0);
+        ctx.lineTo(col * cellW, h);
+        ctx.stroke();
+    }
+
+    if (!canvas._heatmapWired) {
+        canvas._heatmapWired = true;
+        var tooltip = DOM.statsHeatmapTooltip;
+
+        canvas.addEventListener('mousemove', function (e) {
+            var rect = canvas.getBoundingClientRect();
+            var mx = e.clientX - rect.left;
+            var my = e.clientY - rect.top;
+            var col = Math.floor(mx / cellW);
+            var row = Math.floor(my / cellH);
+            if (col < 0 || col >= mapW || row < 0 || row >= mapH) {
+                tooltip.style.display = 'none';
+                return;
+            }
+            var count = cellMap[col + ',' + row] || 0;
+            tooltip.textContent = '(' + col + ',' + row + ') 访问次数:' + count;
+            tooltip.style.display = 'block';
+            tooltip.style.left = (mx + 12) + 'px';
+            tooltip.style.top = (my - 20) + 'px';
+        });
+
+        canvas.addEventListener('mouseleave', function () {
+            tooltip.style.display = 'none';
+        });
+    }
 }
