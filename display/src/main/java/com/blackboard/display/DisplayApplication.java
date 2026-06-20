@@ -33,10 +33,9 @@ public class DisplayApplication {
     private static final String MQ_HOST = "localhost";
     private static final int MQ_PORT = 5672;
 
-    private static final String DB_URL = "jdbc:sqlserver://LAPTOP-LTTJ001U;databaseName=ExplorationDB;encrypt=false;trustServerCertificate=true";
-    private static final String DB_USERNAME = "sa";
-    private static final String DB_PASSWORD = "yxy450716" +
-            "";
+    private static final String DB_URL = "jdbc:sqlserver://192.168.107.132:1433;databaseName=ExplorationDB;encrypt=true;trustServerCertificate=true;characterEncoding=UTF-8";
+    private static final String DB_USERNAME = "uuu";
+    private static final String DB_PASSWORD = "uuu12345";
 
     public static void main(String[] args) throws Exception {
 
@@ -61,6 +60,7 @@ public class DisplayApplication {
         try {
             mq = new MessageQueueImpl(MQ_HOST, MQ_PORT);
             mq.connect();
+            mq.declareAllQueues(5); // 确保 ControllerCmd 等队列存在
             System.out.println("[启动] RabbitMQ 连接成功 (" + MQ_HOST + ":" + MQ_PORT + ")");
         } catch (Exception e) {
             System.err.println("[启动] RabbitMQ 连接失败: " + e.getMessage());

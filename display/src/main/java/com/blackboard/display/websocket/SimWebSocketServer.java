@@ -20,7 +20,7 @@ import java.util.Set;
 public class SimWebSocketServer extends WebSocketServer {
 
     private static final Set<String> USER_COMMANDS = Set.of(
-            "LOGIN", "LOGOUT", "GET_PROFILE", "UPDATE_NICKNAME",
+            "LOGIN", "REGISTER", "LOGOUT", "GET_PROFILE", "UPDATE_NICKNAME",
             "SAVE_PREF", "GET_PREFS", "ADD_HISTORY", "GET_HISTORY",
             "CHANGE_PASSWORD"
     );

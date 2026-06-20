@@ -50,7 +50,15 @@ var state = {
 var currentUser = {
     userId: null,
     nickname: '未登录',
+    role: '',
     preferences: {}
+};
+
+/** 角色可访问的导航标签 */
+var ROLE_TABS = {
+    'admin':     ['settings', 'user'],
+    'operator':  ['realtime', 'replay', 'user'],
+    'analyst':   ['replay', 'stats', 'user']
 };
 
 /** 用于防闪烁 — 缓存上次机器人数据快照 */
@@ -85,6 +93,9 @@ function init() {
     tryConnectWebSocket();
     startRenderLoop();
     addLog('info', '系统就绪，等待仿真启动...');
+
+    // 启动时显示登录界面，未登录不可进入操作界面
+    showInitialLogin();
 }
 
 function cacheDomReferences() {
@@ -123,8 +134,15 @@ function cacheDomReferences() {
 
     // 登录弹窗
     DOM.loginOverlay = document.getElementById('loginOverlay');
+    DOM.loginCard = document.querySelector('.login-card');
+    DOM.loginModeTabs = document.getElementById('loginModeTabs');
+    DOM.loginCardTitle = document.getElementById('loginCardTitle');
     DOM.loginNickname = document.getElementById('loginNickname');
     DOM.loginPassword = document.getElementById('loginPassword');
+    DOM.loginConfirmPassword = document.getElementById('loginConfirmPassword');
+    DOM.loginRole = document.getElementById('loginRole');
+    DOM.confirmPasswordField = document.getElementById('confirmPasswordField');
+    DOM.roleField = document.getElementById('roleField');
     DOM.loginBtn = document.getElementById('loginBtn');
     DOM.loginClose = document.getElementById('loginClose');
     DOM.loginError = document.getElementById('loginError');
@@ -162,14 +180,6 @@ function cacheDomReferences() {
     DOM.statsCoverageWrap = document.getElementById('statsCoverageWrap');
     DOM.statsCarCanvas = document.getElementById('statsCarCanvas');
     DOM.statsCarWrap = document.getElementById('statsCarWrap');
-    DOM.statsCompareSelect = document.getElementById('statsCompareSelect');
-    DOM.statsCompareBtn = document.getElementById('statsCompareBtn');
-    DOM.statsCompareCanvas = document.getElementById('statsCompareCanvas');
-    DOM.statsCompareWrap = document.getElementById('statsCompareWrap');
-    DOM.statsHeatmapBtn = document.getElementById('statsHeatmapBtn');
-    DOM.statsHeatmapCanvas = document.getElementById('statsHeatmapCanvas');
-    DOM.statsHeatmapWrap = document.getElementById('statsHeatmapWrap');
-    DOM.statsHeatmapTooltip = document.getElementById('statsHeatmapTooltip');
 
     // 系统设置
     DOM.settingsPanel = document.getElementById('settingsPanel');
@@ -184,6 +194,7 @@ function cacheDomReferences() {
     // 用户中心
     DOM.ucNickname = document.getElementById('ucNickname');
     DOM.ucUserId = document.getElementById('ucUserId');
+    DOM.ucRoleBadge = document.getElementById('ucRoleBadge');
     DOM.ucInfoId = document.getElementById('ucInfoId');
     DOM.ucInfoNickname = document.getElementById('ucInfoNickname');
     DOM.ucInfoCreated = document.getElementById('ucInfoCreated');
@@ -530,10 +541,12 @@ function handleCommandResponse(raw) {
     if (raw.success) {
         var data = raw.data || {};
 
-        // LOGIN 响应
+        // LOGIN / REGISTER 响应
         if (data.userId && data.nickname) {
             currentUser.userId = data.userId;
             currentUser.nickname = data.nickname;
+            // 角色：优先使用后端返回的 role，其次保留注册时暂存的值
+            currentUser.role = data.role || currentUser.role || '';
             currentUser.preferences = data.preferences || {};
             currentUser.createdAt = data.createdAt || null;
             currentUser.lastLogin = data.lastLogin || null;
@@ -541,8 +554,13 @@ function handleCommandResponse(raw) {
             currentUser.replayCount = data.replayCount || 0;
             DOM.headerUserName.textContent = data.nickname;
             DOM.loginBtn.disabled = false;
-            DOM.loginBtn.textContent = '登录 / 注册';
-            hideLoginModal();
+            DOM.loginBtn.textContent = '登 录';
+            DOM.loginError.textContent = '';
+            if (DOM.ucPwdMsg) DOM.ucPwdMsg.textContent = '';
+            // 登录/注册成功，关闭登录弹窗，显示主界面
+            DOM.loginOverlay.style.display = 'none';
+            DOM.loginClose.style.display = '';
+            filterNavTabsByRole(currentUser.role);
             addLog('success', data.message || ('登录成功: ' + data.nickname));
         }
         // LOGOUT 响应
@@ -609,10 +627,10 @@ function handleCommandResponse(raw) {
     } else {
         addLog('error', raw.error || '操作失败');
         DOM.loginBtn.disabled = false;
-        DOM.loginBtn.textContent = '登录 / 注册';
+        DOM.loginBtn.textContent = getLoginMode() === 'register' ? '注 册' : '登 录';
         DOM.loginError.textContent = raw.error || '操作失败';
-        // 密码修改失败
-        if (raw.error && (raw.error.indexOf('密码') >= 0 || raw.error.indexOf('登录') >= 0)) {
+        // 仅在密码修改/密码相关错误时显示到用户中心
+        if (raw.error && raw.error.indexOf('密码') >= 0) {
             if (DOM.ucPwdMsg) { DOM.ucPwdMsg.textContent = raw.error; DOM.ucPwdMsg.style.color = 'var(--accent-red)'; }
         }
     }
@@ -686,11 +704,11 @@ function updateRobotCards() {
         html += '<span class="status-badge ' + statusClass + '">' + statusText + '</span>';
         html += '</div>';
         html += '<div class="robot-card-info">';
-        html += '<div class="info-item"><span class="info-label">浣嶇疆</span><span class="info-value">(' + car.position.x + ', ' + car.position.y + ')</span></div>';
-        html += '<div class="info-item"><span class="info-label">姝ユ暟</span><span class="info-value">' + (car.stepsWalked || 0) + '</span></div>';
+        html += '<div class="info-item"><span class="info-label">位置</span><span class="info-value">(' + car.position.x + ', ' + car.position.y + ')</span></div>';
+        html += '<div class="info-item"><span class="info-label">步数</span><span class="info-value">' + (car.stepsWalked || 0) + '</span></div>';
         html += '</div>';
         if (car.target && car.target.x !== undefined) {
-            html += '<div class="robot-card-target">鐩爣: (' + car.target.x + ', ' + car.target.y + ')</div>';
+            html += '<div class="robot-card-target">目标: (' + car.target.x + ', ' + car.target.y + ')</div>';
         }
         html += '<div class="battery-bar"><div class="battery-fill ' + batteryClass + '" style="width:' + battery + '%;"></div></div>';
         html += '</div>';
@@ -826,7 +844,15 @@ function wireEvents() {
     // 登录弹窗事件
     DOM.loginClose.addEventListener('click', hideLoginModal);
     DOM.loginOverlay.addEventListener('click', function (e) {
-        if (e.target === DOM.loginOverlay) hideLoginModal();
+        // 未登录时不允许点击遮罩关闭
+        if (e.target === DOM.loginOverlay && currentUser.userId) hideLoginModal();
+    });
+    // 登录/注册 模式切换
+    DOM.loginModeTabs.addEventListener('click', function (e) {
+        var tab = e.target.closest('.login-mode-tab');
+        if (!tab) return;
+        var mode = tab.getAttribute('data-mode');
+        switchLoginMode(mode);
     });
     DOM.loginBtn.addEventListener('click', doLogin);
     DOM.loginNickname.addEventListener('keydown', function (e) {
@@ -834,7 +860,18 @@ function wireEvents() {
         DOM.loginError.textContent = '';
     });
     DOM.loginPassword.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') doLogin();
+        if (e.key === 'Enter') {
+            // 注册模式下跳转到确认密码，登录模式下直接提交
+            if (getLoginMode() === 'register') {
+                DOM.loginConfirmPassword.focus(); e.preventDefault();
+            } else {
+                doLogin();
+            }
+        }
+        DOM.loginError.textContent = '';
+    });
+    DOM.loginConfirmPassword.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { DOM.loginRole.focus(); e.preventDefault(); }
         DOM.loginError.textContent = '';
     });
 
@@ -1048,22 +1085,97 @@ function wireEvents() {
 
 // ==================== 登录弹窗 ====================
 
-function showLoginModal() {
+/** 启动时显示登录界面 —— 未登录状态下不可关闭 */
+function showInitialLogin() {
     DOM.loginOverlay.style.display = 'flex';
-    DOM.loginNickname.value = '';
-    DOM.loginPassword.value = '';
-    DOM.loginError.textContent = '';
-    DOM.loginHint.textContent = '已有账号输入昵称+密码登录，新用户自动注册';
+    DOM.loginClose.style.display = 'none';
+    resetLoginForm();
+    switchLoginMode('login');
+    DOM.loginHint.textContent = '请先登录或注册，注册请切换上方标签';
     setTimeout(function () { DOM.loginNickname.focus(); }, 100);
 }
 
+function showLoginModal() {
+    DOM.loginOverlay.style.display = 'flex';
+    // 已登录用户可关闭弹窗，未登录则隐藏关闭按钮
+    DOM.loginClose.style.display = currentUser.userId ? '' : 'none';
+    resetLoginForm();
+    switchLoginMode('login');
+    DOM.loginHint.textContent = '已有账号输入昵称+密码登录，新用户请切换至注册';
+    setTimeout(function () { DOM.loginNickname.focus(); }, 100);
+}
+
+/** 重置登录表单 */
+function resetLoginForm() {
+    DOM.loginNickname.value = '';
+    DOM.loginPassword.value = '';
+    DOM.loginConfirmPassword.value = '';
+    DOM.loginRole.value = 'analyst';
+    DOM.loginError.textContent = '';
+    DOM.loginBtn.disabled = false;
+    DOM.loginBtn.textContent = '登 录';
+}
+
 function hideLoginModal() {
+    // 未登录状态下不允许关闭登录弹窗
+    if (!currentUser.userId) return;
     DOM.loginOverlay.style.display = 'none';
+    DOM.loginClose.style.display = '';
+}
+
+/** 切换登录/注册模式 */
+function switchLoginMode(mode) {
+    var tabs = DOM.loginModeTabs.querySelectorAll('.login-mode-tab');
+    tabs.forEach(function (t) {
+        t.classList.toggle('active', t.getAttribute('data-mode') === mode);
+    });
+    if (mode === 'register') {
+        DOM.loginCard.classList.add('register-mode');
+        DOM.loginBtn.textContent = '注 册';
+        DOM.loginHint.textContent = '填写昵称和密码完成注册，密码至少6位';
+    } else {
+        DOM.loginCard.classList.remove('register-mode');
+        DOM.loginBtn.textContent = '登 录';
+        DOM.loginHint.textContent = '已有账号？输入昵称+密码登录。新用户请切换至注册';
+    }
+    DOM.loginError.textContent = '';
+}
+
+/** 获取当前登录模式 */
+function getLoginMode() {
+    var activeTab = DOM.loginModeTabs.querySelector('.login-mode-tab.active');
+    return activeTab ? activeTab.getAttribute('data-mode') : 'login';
+}
+
+/** 根据角色过滤导航标签 */
+function filterNavTabsByRole(role) {
+    var tabs = DOM.navTabs.querySelectorAll('.nav-tab');
+    var allowed = ROLE_TABS[role] || [];
+    if (allowed.length === 0) return; // 无角色不过滤
+    var firstVisible = null;
+
+    tabs.forEach(function (tab) {
+        var name = tab.getAttribute('data-tab');
+        if (allowed.indexOf(name) >= 0) {
+            tab.style.display = '';
+            if (!firstVisible) firstVisible = tab;
+        } else {
+            tab.style.display = 'none';
+        }
+    });
+
+    // 如果当前激活标签被隐藏，切换到第一个可见标签
+    var active = DOM.navTabs.querySelector('.nav-tab.active');
+    if (!active || active.style.display === 'none') {
+        if (firstVisible) firstVisible.click();
+    }
 }
 
 function doLogin() {
     var nickname = DOM.loginNickname.value.trim();
     var password = DOM.loginPassword.value;
+    var mode = getLoginMode();
+
     if (!nickname) {
         DOM.loginError.textContent = '请输入昵称';
         return;
@@ -1076,13 +1188,35 @@ function doLogin() {
         DOM.loginError.textContent = '密码至少需要 6 位';
         return;
     }
+
+    // 注册模式：校验确认密码
+    if (mode === 'register') {
+        var confirmPassword = DOM.loginConfirmPassword.value;
+        if (!confirmPassword) {
+            DOM.loginError.textContent = '请再次输入密码进行确认';
+            return;
+        }
+        if (password !== confirmPassword) {
+            DOM.loginError.textContent = '两次输入的密码不一致，请重新输入';
+            return;
+        }
+    }
+
     if (!wsConnected) {
-        DOM.loginError.textContent = 'WebSocket 未连接，无法登录';
+        DOM.loginError.textContent = 'WebSocket 未连接，无法操作';
         return;
     }
+
     DOM.loginBtn.disabled = true;
-    DOM.loginBtn.textContent = '处理中...';
-    sendCommand('LOGIN', { nickname: nickname, password: password });
+    DOM.loginBtn.textContent = mode === 'register' ? '注册中...' : '登录中...';
+
+    if (mode === 'register') {
+        var selectedRole = DOM.loginRole.value;
+        currentUser.role = selectedRole;
+        sendCommand('REGISTER', { nickname: nickname, password: password, role: selectedRole });
+    } else {
+        sendCommand('LOGIN', { nickname: nickname, password: password });
+    }
 }
 
 // ==================== 用户中心 ====================
@@ -1128,6 +1262,14 @@ function loadUserProfile() {
         DOM.ucUserId.textContent = 'ID: ' + currentUser.userId;
         DOM.ucInfoId.textContent = currentUser.userId;
         DOM.ucInfoNickname.textContent = currentUser.nickname;
+        // 显示角色徽章
+        if (currentUser.role && DOM.ucRoleBadge) {
+            DOM.ucRoleBadge.textContent = getRoleLabel(currentUser.role);
+            DOM.ucRoleBadge.className = 'user-center-role role-' + currentUser.role;
+            DOM.ucRoleBadge.style.display = 'inline-block';
+        } else if (DOM.ucRoleBadge) {
+            DOM.ucRoleBadge.style.display = 'none';
+        }
 
         // 用 cookie（临时缓存）或默认值填充
         DOM.ucInfoCreated.textContent = currentUser.createdAt || '--';
@@ -1145,6 +1287,7 @@ function loadUserProfile() {
         DOM.ucUserId.textContent = 'ID: --';
         DOM.ucInfoId.textContent = '--';
         DOM.ucInfoNickname.textContent = '--';
+        if (DOM.ucRoleBadge) DOM.ucRoleBadge.style.display = 'none';
         DOM.ucInfoCreated.textContent = '--';
         DOM.ucInfoLastLogin.textContent = '--';
         DOM.ucInfoSessions.textContent = '0';
@@ -1199,6 +1342,7 @@ function doLogout() {
     if (wsConnected) sendCommand('LOGOUT');
     currentUser.userId = null;
     currentUser.nickname = '未登录';
+    currentUser.role = '';
     currentUser.preferences = {};
     currentUser.createdAt = null;
     currentUser.lastLogin = null;
@@ -1209,6 +1353,8 @@ function doLogout() {
     DOM.ucUserId.textContent = 'ID: --';
     showMapView();
     addLog('info', '已退出登录');
+    // 退出后显示登录弹窗
+    showInitialLogin();
 }
 
 // ==================== 回放分析 ====================
@@ -1871,6 +2017,12 @@ function addLog(level, message) {
 
 // ==================== 辅助 ====================
 
+/** 角色值 → 中文显示标签 */
+function getRoleLabel(role) {
+    var map = { 'admin': '系统配置员', 'operator': '运行人员', 'analyst': '分析人员' };
+    return map[role] || role || '未知';
+}
+
 function padZero(n) { return n < 10 ? '0' + n : '' + n; }
 function formatElapsed(ms) { if (!ms || ms < 0) return '00:00:00'; var s = Math.floor(ms / 1000); return padZero(Math.floor(s/3600)) + ':' + padZero(Math.floor((s%3600)/60)) + ':' + padZero(s%60); }
 function escapeHtml(str) { var d = document.createElement('div'); d.appendChild(document.createTextNode(str)); return d.innerHTML; }
@@ -1902,7 +2054,6 @@ function refreshStatsSessions() {
             if (sessions.length === 0) {
                 sel.innerHTML += '<option value="" disabled>暂无历史会话</option>';
             }
-            initStatsCompareSelect();
         })
         .catch(function () {
             addLog('warn', '未连接到统计分析服务 8085');
@@ -1915,14 +2066,6 @@ function refreshStatsSessions() {
         sel.addEventListener('change', function () {
             var sid = this.value;
             if (sid) loadStatsSession(sid);
-        });
-    }
-
-    // 绑定热力图按钮（仅一次）
-    if (!DOM.statsHeatmapBtn._wired) {
-        DOM.statsHeatmapBtn._wired = true;
-        DOM.statsHeatmapBtn.addEventListener('click', function () {
-            loadHeatmap(sel.value);
         });
     }
 }
@@ -2193,296 +2336,13 @@ function renderCarContribution(data) {
         { label: 'blocked', color: '#ff4a4a' },
         { label: 'navCount', color: '#4aff7a' }
     ];
-    ctx.font = '11px monospace';
+    ctx.font = '8px monospace';
     legendItems.forEach(function (item, i) {
-        var lx = legendX + i * 80;
+        var lx = legendX + i * 70;
         ctx.fillStyle = item.color;
-        ctx.fillRect(lx, legendY, 10, 10);
+        ctx.fillRect(lx, legendY, 8, 8);
         ctx.fillStyle = '#8899aa';
         ctx.textAlign = 'left';
-        ctx.fillText(item.label, lx + 14, legendY + 10);
+        ctx.fillText(item.label, lx + 11, legendY + 8);
     });
-}
-
-// ==================== 多会话对比 ====================
-
-function initStatsCompareSelect() {
-    var src = DOM.statsSessionSelect;
-    var dst = DOM.statsCompareSelect;
-    dst.innerHTML = '';
-    var opts = src.querySelectorAll('option');
-    opts.forEach(function (opt) {
-        if (opt.value) {
-            var clone = document.createElement('option');
-            clone.value = opt.value;
-            clone.textContent = opt.textContent;
-            dst.appendChild(clone);
-        }
-    });
-
-    // 多选点击切换：单击即可选择/取消，无需按 Ctrl
-    if (!dst._toggleWired) {
-        dst._toggleWired = true;
-        dst.addEventListener('mousedown', function (e) {
-            var opt = e.target.closest('option');
-            if (!opt) return;
-            e.preventDefault();
-            opt.selected = !opt.selected;
-            dst.focus();
-            return false;
-        });
-    }
-
-    if (!DOM.statsCompareBtn._wired) {
-        DOM.statsCompareBtn._wired = true;
-        DOM.statsCompareBtn.addEventListener('click', runSessionCompare);
-    }
-}
-
-function runSessionCompare() {
-    var sel = DOM.statsCompareSelect;
-    var selected = [];
-    for (var i = 0; i < sel.options.length; i++) {
-        if (sel.options[i].selected) selected.push(sel.options[i].value);
-    }
-    if (selected.length < 2) {
-        addLog('warn', '请至少选择两个会话');
-        return;
-    }
-    if (selected.length > 5) selected = selected.slice(0, 5);
-
-    var ids = selected.join(',');
-    fetch(STATS_API_BASE + '/sessions/compare?ids=' + encodeURIComponent(ids))
-        .then(function (res) { return res.json(); })
-        .then(function (data) { renderCompareChart(data); })
-        .catch(function (e) { addLog('error', '对比接口失败: ' + e.message); });
-}
-
-function renderCompareChart(data) {
-    var canvas = DOM.statsCompareCanvas;
-    var wrap = DOM.statsCompareWrap;
-    var dpr = window.devicePixelRatio || 1;
-    var w = wrap.clientWidth;
-    var h = wrap.clientHeight;
-
-    canvas.width = w * dpr;
-    canvas.height = h * dpr;
-    canvas.style.width = w + 'px';
-    canvas.style.height = h + 'px';
-
-    var ctx = canvas.getContext('2d');
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-    // 背景
-    ctx.fillStyle = '#061529';
-    ctx.fillRect(0, 0, w, h);
-
-    var sessions = data.sessions || [];
-    var curves = data.curves || {};
-    if (sessions.length === 0) {
-        ctx.fillStyle = '#667788';
-        ctx.font = '12px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText('暂无数据', w / 2, h / 2);
-        return;
-    }
-
-    var margin = { left: 50, right: 20, top: 16, bottom: 28 };
-    var pw = w - margin.left - margin.right;
-    var ph = h - margin.top - margin.bottom;
-
-    // 计算全局 tick 范围：所有会话统一从0开始，各会话偏移自身 minTick
-    var globalMaxTick = 0;
-    var offsets = {};
-    sessions.forEach(function (s) {
-        var pts = curves[s.sessionId] || [];
-        if (pts.length > 0) {
-            var minT = pts[0].tick;
-            var maxT = pts[pts.length - 1].tick;
-            offsets[s.sessionId] = minT;
-            if (maxT - minT > globalMaxTick) globalMaxTick = maxT - minT;
-        }
-    });
-    if (globalMaxTick === 0) globalMaxTick = 1;
-
-    // 坐标轴
-    ctx.strokeStyle = '#334455';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(margin.left, margin.top);
-    ctx.lineTo(margin.left, margin.top + ph);
-    ctx.lineTo(margin.left + pw, margin.top + ph);
-    ctx.stroke();
-
-    // Y轴刻度
-    ctx.fillStyle = '#667788';
-    ctx.font = '9px monospace';
-    ctx.textAlign = 'right';
-    for (var pct = 0; pct <= 100; pct += 25) {
-        var y = margin.top + ph - (pct / 100) * ph;
-        ctx.fillText(pct + '%', margin.left - 6, y + 3);
-        ctx.strokeStyle = '#1a2a3a';
-        ctx.beginPath();
-        ctx.moveTo(margin.left, y);
-        ctx.lineTo(margin.left + pw, y);
-        ctx.stroke();
-    }
-
-    // X轴刻度
-    ctx.textAlign = 'center';
-    var xSteps = Math.min(5, globalMaxTick > 0 ? 5 : 1);
-    for (var i = 0; i <= xSteps; i++) {
-        var tickVal = Math.round((i / xSteps) * globalMaxTick);
-        var x = margin.left + (tickVal / globalMaxTick) * pw;
-        ctx.fillText(tickVal, x, margin.top + ph + 14);
-    }
-
-    // 调色板
-    var palette = ['#4a9eff', '#ff4a4a', '#4aff7a', '#ffaa00', '#cc44ff'];
-
-    // 绘制折线
-    sessions.forEach(function (s, si) {
-        var color = palette[si % palette.length];
-        var pts = curves[s.sessionId] || [];
-        if (pts.length === 0) return;
-        var offset = offsets[s.sessionId] || 0;
-
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        for (var j = 0; j < pts.length; j++) {
-            var px = margin.left + ((pts[j].tick - offset) / globalMaxTick) * pw;
-            var py = margin.top + ph - pts[j].coverage * ph;
-            if (j === 0) ctx.moveTo(px, py);
-            else ctx.lineTo(px, py);
-        }
-        ctx.stroke();
-
-        // 末端圆点
-        var last = pts[pts.length - 1];
-        var lx = margin.left + ((last.tick - offset) / globalMaxTick) * pw;
-        var ly = margin.top + ph - last.coverage * ph;
-        ctx.fillStyle = color;
-        ctx.beginPath();
-        ctx.arc(lx, ly, 4, 0, Math.PI * 2);
-        ctx.fill();
-    });
-
-    // 图例（右上角）
-    var legendX = margin.left + pw - 220;
-    var legendY = margin.top + 4;
-    sessions.forEach(function (s, si) {
-        var color = palette[si % palette.length];
-        var label = s.label || s.sessionId || '';
-        if (label.length > 12) label = label.slice(0, 12);
-        var ly = legendY + si * 16;
-        ctx.fillStyle = color;
-        ctx.fillRect(legendX, ly, 10, 10);
-        ctx.fillStyle = '#ccc';
-        ctx.font = '9px monospace';
-        ctx.textAlign = 'left';
-        ctx.fillText(label, legendX + 14, ly + 9);
-    });
-}
-
-// ==================== 热力图 ====================
-
-function loadHeatmap(sessionId) {
-    if (!sessionId) {
-        addLog('warn', '请先选择会话');
-        return;
-    }
-    fetch(STATS_API_BASE + '/sessions/' + encodeURIComponent(sessionId) + '/heatmap')
-        .then(function (res) { return res.json(); })
-        .then(function (data) { renderHeatmap(data); })
-        .catch(function (e) { addLog('error', '热力图接口失败: ' + e.message); });
-}
-
-function renderHeatmap(data) {
-    var canvas = DOM.statsHeatmapCanvas;
-    var wrap = DOM.statsHeatmapWrap;
-    var dpr = window.devicePixelRatio || 1;
-    var w = wrap.clientWidth;
-    var h = wrap.clientHeight;
-
-    canvas.width = w * dpr;
-    canvas.height = h * dpr;
-    canvas.style.width = w + 'px';
-    canvas.style.height = h + 'px';
-
-    var ctx = canvas.getContext('2d');
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-    // 背景
-    ctx.fillStyle = '#061529';
-    ctx.fillRect(0, 0, w, h);
-
-    var mapW = data.mapWidth || 1;
-    var mapH = data.mapHeight || 1;
-    var maxCount = data.maxCount || 1;
-    var cells = data.cells || [];
-
-    // 构建 cells 快速查找表
-    var cellMap = {};
-    cells.forEach(function (c) {
-        cellMap[c.x + ',' + c.y] = c.count;
-    });
-
-    // 铺满 canvas
-    var cellW = w / mapW;
-    var cellH = h / mapH;
-
-    for (var row = 0; row < mapH; row++) {
-        for (var col = 0; col < mapW; col++) {
-            var count = cellMap[col + ',' + row] || 0;
-            if (count > 0) {
-                var alpha = count / maxCount;
-                ctx.fillStyle = 'rgba(255,74,74,' + alpha.toFixed(2) + ')';
-                ctx.fillRect(col * cellW, row * cellH, cellW, cellH);
-            }
-        }
-    }
-
-    // 网格线
-    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-    ctx.lineWidth = 0.5;
-    for (var row = 0; row <= mapH; row++) {
-        ctx.beginPath();
-        ctx.moveTo(0, row * cellH);
-        ctx.lineTo(w, row * cellH);
-        ctx.stroke();
-    }
-    for (var col = 0; col <= mapW; col++) {
-        ctx.beginPath();
-        ctx.moveTo(col * cellW, 0);
-        ctx.lineTo(col * cellW, h);
-        ctx.stroke();
-    }
-
-    // 鼠标 tooltip 事件（绑一次）
-    if (!canvas._heatmapWired) {
-        canvas._heatmapWired = true;
-        var tooltip = DOM.statsHeatmapTooltip;
-
-        canvas.addEventListener('mousemove', function (e) {
-            var rect = canvas.getBoundingClientRect();
-            var mx = e.clientX - rect.left;
-            var my = e.clientY - rect.top;
-            var col = Math.floor(mx / cellW);
-            var row = Math.floor(my / cellH);
-            if (col < 0 || col >= mapW || row < 0 || row >= mapH) {
-                tooltip.style.display = 'none';
-                return;
-            }
-            var count = cellMap[col + ',' + row] || 0;
-            tooltip.textContent = '(' + col + ',' + row + ') 访问次数:' + count;
-            tooltip.style.display = 'block';
-            tooltip.style.left = (mx + 12) + 'px';
-            tooltip.style.top = (my - 20) + 'px';
-        });
-
-        canvas.addEventListener('mouseleave', function () {
-            tooltip.style.display = 'none';
-        });
-    }
 }

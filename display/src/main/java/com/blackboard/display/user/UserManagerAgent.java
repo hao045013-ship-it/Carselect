@@ -7,7 +7,6 @@ import com.blackboard.display.db.DBConnection;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.security.SecureRandom;
 import java.sql.*;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -48,6 +47,7 @@ public class UserManagerAgent {
 
             return switch (cmd.toUpperCase()) {
                 case "LOGIN"           -> handleLogin(data);
+                case "REGISTER"        -> handleRegister(data);
                 case "LOGOUT"          -> handleLogout();
                 case "GET_PROFILE"     -> handleGetProfile();
                 case "UPDATE_NICKNAME" -> handleUpdateNickname(data);
@@ -100,13 +100,41 @@ public class UserManagerAgent {
             }
         }
 
-        // === 新用户注册 ===
+        // 用户不存在，拒绝登录
+        return error("账户未注册，请先注册账户后登录");
+    }
+
+    // ==================== REGISTER ====================
+
+    private static String handleRegister(JSONObject data) throws SQLException {
+        String nickname = data != null ? data.getString("nickname") : null;
+        String password = data != null ? data.getString("password") : null;
+        String role = data != null ? data.getString("role") : null;
+        if (nickname == null || nickname.trim().isEmpty()) return error("昵称不能为空");
+        if (password == null || password.length() < 6) return error("密码至少需要6位");
+        if (role == null || role.trim().isEmpty()) role = "analyst";
+        nickname = nickname.trim();
+        role = role.trim();
+
+        // 检查昵称是否已被注册
+        String existSql = "SELECT user_id FROM dbo.users WHERE nickname = ?";
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement ps = conn.prepareStatement(existSql)) {
+            ps.setString(1, nickname);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return error("该昵称已被注册，请直接登录或更换昵称");
+                }
+            }
+        }
+
+        // 创建新用户
         String userId = generateUserId();
         long now = System.currentTimeMillis();
 
-        // 哈希密码存入 prefs_json
+        // 密码哈希 + 角色存入 prefs_json
         String passwordHash = hashPassword(password);
-        String prefsJson = "{\"__pwd\":\"" + passwordHash + "\"}";
+        String prefsJson = "{\"__pwd\":\"" + passwordHash + "\",\"__role\":\"" + escapeJson(role) + "\"}";
 
         String insertSql = "INSERT INTO dbo.users (user_id, nickname, created_at, last_login, session_count, replay_count, prefs_json) VALUES (?, ?, ?, ?, 0, 0, ?)";
         try (Connection conn = DBConnection.getConnection();
@@ -324,6 +352,9 @@ public class UserManagerAgent {
                     r.put("replayCount", rs.getInt("replay_count"));
                     String pj = rs.getString("prefs_json");
                     Map<String, Object> prefsMap = pj != null ? JSON.parseObject(pj) : new HashMap<>();
+                    // 提取角色
+                    Object roleObj = prefsMap.remove("__role");
+                    if (roleObj != null) r.put("role", roleObj.toString());
                     prefsMap.remove("__pwd"); // 不暴露密码哈希给前端
                     r.put("preferences", prefsMap);
                 }
@@ -447,6 +478,16 @@ public class UserManagerAgent {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /** 转义 JSON 字符串中的特殊字符 */
+    private static String escapeJson(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
     }
 
     /** 更新最后登录时间 */
