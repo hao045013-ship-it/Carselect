@@ -28,6 +28,9 @@ public class StatsCollector {
     /** 每辆车上次记录的步数快照，START 时重置 */
     private final Map<String, Integer> lastStepSnapshot = new HashMap<>();
 
+    /** 是否已经写入最终时长（覆盖率到100%时即为true，避免RESET覆盖） */
+    private boolean sessionFinalized = false;
+
     public StatsCollector(Blackboard board, MessageQueue mq,
                           SqlStatsPersistence sqlPersistence,
                           PredictionEngine predictionEngine) {
@@ -75,6 +78,7 @@ public class StatsCollector {
     private void handleStart(long timestamp) {
         currentSessionId = sqlPersistence.getLatestSessionId();
         sessionStartTime = timestamp;
+        sessionFinalized = false;
         lastStepSnapshot.clear();
         predictionEngine.reset();
     }
@@ -150,16 +154,27 @@ public class StatsCollector {
                     avgNavEfficiency,
                     carsJson.toJSONString(),
                     timestamp);
+
+            // 覆盖率到达100%时立刻写入时长，不等RESET
+            if (coverage >= 1.0 && !sessionFinalized) {
+                long durationMs = timestamp - sessionStartTime;
+                sqlPersistence.finalizeSessionStats(currentSessionId, durationMs);
+                sessionFinalized = true;
+            }
         }
     }
 
-    /** RESET：写入最终时长，清空会话与预测数据 */
+    /** RESET：兜底写入最终时长（覆盖率未到100%就重置的场景），清空会话与预测数据 */
     private void handleReset(long timestamp) {
         if (currentSessionId != null) {
-            long durationMs = timestamp - sessionStartTime;
-            sqlPersistence.finalizeSessionStats(currentSessionId, durationMs);
+            // 如果覆盖率已到100%则时长已经写入，不再覆盖
+            if (!sessionFinalized) {
+                long durationMs = timestamp - sessionStartTime;
+                sqlPersistence.finalizeSessionStats(currentSessionId, durationMs);
+            }
             currentSessionId = null;
         }
+        sessionFinalized = false;
         predictionEngine.reset();
         lastStepSnapshot.clear();
     }
