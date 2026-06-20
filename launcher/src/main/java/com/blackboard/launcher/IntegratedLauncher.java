@@ -9,10 +9,12 @@ import com.blackboard.controller.ControllerAgent;
 import com.blackboard.display.DisplayApplication;
 import com.blackboard.navigator.NavigatorAgent;
 import com.blackboard.obstaclemanager.ObstacleManagerAgent;
+import com.blackboard.registry.RegistryAgent;
 import com.blackboard.targetplanner.TargetPlannerAgent;
 import com.blackboard.taskconfigurator.TaskConfiguratorAgent;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -44,6 +46,10 @@ public class IntegratedLauncher {
 
         MessageQueue obstacleMq = newMq();
         obstacleMq.declareAllQueues(0);
+
+        new RegistryAgent(board, newMq()).start();
+        System.out.println("[OK] Registry started.");
+
         new ObstacleManagerAgent(board, obstacleMq).start();
         System.out.println("[OK] ObstacleManager started and base queues declared.");
 
@@ -58,7 +64,8 @@ public class IntegratedLauncher {
         System.out.println("[OK] Navigator started.");
 
         MessageQueue controllerMq = newMq();
-        new ControllerAgent(board, controllerMq).start();
+        ControllerAgent controller = new ControllerAgent(board, controllerMq);
+        controller.start();
         System.out.println("[OK] Controller started.");
 
         CarFleet carFleet = new CarFleet(board);
@@ -71,7 +78,9 @@ public class IntegratedLauncher {
         System.out.println("============================================");
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            controller.stop();
             carFleet.stop();
+            controllerMq.close();
             board.close();
         }));
 
@@ -105,6 +114,7 @@ public class IntegratedLauncher {
     private static final class CarFleet {
         private final Blackboard board;
         private final Set<String> startedCars = ConcurrentHashMap.newKeySet();
+        private final Map<String, CarAgent> agents = new ConcurrentHashMap<>();
         private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
 
         private CarFleet(Blackboard board) {
@@ -117,6 +127,7 @@ public class IntegratedLauncher {
 
         private void stop() {
             scheduler.shutdownNow();
+            agents.values().forEach(CarAgent::stop);
         }
 
         private void syncCarsSafely() {
@@ -136,7 +147,9 @@ public class IntegratedLauncher {
             MessageQueue carMq = new MessageQueueImpl(RABBITMQ_HOST, RABBITMQ_PORT);
             carMq.connect();
             carMq.declareCarQueue(carId);
-            new CarAgent(carId, board, carMq).start();
+            CarAgent agent = new CarAgent(carId, board, carMq);
+            agent.start();
+            agents.put(carId, agent);
             System.out.println("[CarFleet] " + carId + " started.");
         }
     }

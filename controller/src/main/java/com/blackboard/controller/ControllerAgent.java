@@ -19,11 +19,18 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.UUID;
 
 public class ControllerAgent {
+
+    private static final long REQUEST_RETRY_TIMEOUT_MS = 30_000L;
+    private static final long HEARTBEAT_INTERVAL_MS = 3_000L;
+    // Leader lock is temporarily disabled for smoother single-controller demos.
+    // private static final int LEADER_LOCK_TTL_SECONDS = 10;
 
     private final Blackboard board;
     private final MessageQueue mq;
@@ -32,7 +39,13 @@ public class ControllerAgent {
             Executors.newSingleThreadScheduledExecutor();
 
     private volatile boolean started = false;
+    private volatile boolean controllerSubscribed = false;
+    private volatile boolean tickScheduled = false;
+    private final String instanceId = "controller-" + UUID.randomUUID();
     private String currentSessionId;
+    private final Map<String, Long> targetRequestsInFlight = new ConcurrentHashMap<>();
+    private final Map<String, Long> routeRequestsInFlight = new ConcurrentHashMap<>();
+    private final Map<String, Long> moveRequestsInFlight = new ConcurrentHashMap<>();
 
     public ControllerAgent(Blackboard board, MessageQueue mq) {
         this.board = board;
@@ -40,35 +53,32 @@ public class ControllerAgent {
     }
 
     public void start() {
-        mq.subscribeController(this::handleMessage);
-
-        long interval = getTickInterval();
+        started = true;
+        startLeaderWorkIfNeeded();
         scheduler.scheduleAtFixedRate(
-                this::safeTick,
-                interval,
-                interval,
+                this::safeHeartbeat,
+                0,
+                HEARTBEAT_INTERVAL_MS,
                 TimeUnit.MILLISECONDS
         );
-
-        started = true;
-        System.out.println("ControllerAgent started, tickInterval=" + interval + "ms");
+        System.out.println("ControllerAgent started, instanceId=" + instanceId);
     }
 
     private long getTickInterval() {
         Map<String, String> config = board.getTaskConfig();
         if (config == null) {
-            return 500L;
+            return 300;
         }
 
         String val = config.get("tickInterval");
         if (val == null || val.isBlank()) {
-            return 500L;
+            return 300L;
         }
 
         try {
             return Long.parseLong(val);
         } catch (NumberFormatException e) {
-            return 500L;
+            return 300L;
         }
     }
 
@@ -79,6 +89,65 @@ public class ControllerAgent {
             e.printStackTrace();
             board.addLogEntry("ERROR: Controller tick failed: " + e.getMessage());
         }
+    }
+
+    private void safeHeartbeat() {
+        try {
+            board.updateControllerHeartbeat(instanceId, started ? "RUNNING" : "STOPPED");
+        } catch (Exception e) {
+            e.printStackTrace();
+            board.addLogEntry("ERROR: Controller heartbeat failed: " + e.getMessage());
+        }
+    }
+
+    /*
+     * Leader lock is currently disabled. If multi-controller protection is needed again,
+     * restore this method and call it from start() instead of startLeaderWorkIfNeeded().
+     *
+    private void maintainLeadership() {
+        boolean nowLeader = leader
+                ? board.refreshControllerLeadership(instanceId, LEADER_LOCK_TTL_SECONDS)
+                : board.acquireControllerLeadership(instanceId, LEADER_LOCK_TTL_SECONDS);
+
+        if (!nowLeader) {
+            leader = false;
+            board.updateControllerHeartbeat(instanceId, "STANDBY");
+            return;
+        }
+
+        if (!leader) {
+            board.addLogEntry("INFO: Controller became leader: " + instanceId);
+            System.out.println("ControllerAgent became leader: " + instanceId);
+        }
+        leader = true;
+        board.updateControllerHeartbeat(instanceId, "LEADER");
+        startLeaderWorkIfNeeded();
+    }
+    */
+
+    private void startLeaderWorkIfNeeded() {
+        if (!controllerSubscribed) {
+            mq.subscribeController(this::handleMessage);
+            controllerSubscribed = true;
+        }
+
+        if (!tickScheduled) {
+            long interval = getTickInterval();
+            scheduler.scheduleAtFixedRate(
+                    this::safeTick,
+                    interval,
+                    interval,
+                    TimeUnit.MILLISECONDS
+            );
+            tickScheduled = true;
+            System.out.println("ControllerAgent tick scheduled, tickInterval=" + interval + "ms");
+        }
+    }
+
+    public void stop() {
+        scheduler.shutdownNow();
+        board.updateControllerHeartbeat(instanceId, "STOPPED");
+        started = false;
     }
 
     private void handleMessage(String messageJson) {
@@ -201,6 +270,7 @@ public class ControllerAgent {
 
     private void handleSetConfig(JSONObject data) {
         Map<String, Object> map = jsonObjectToMap(data);
+        clearSchedulingRequests();
         purgeSimulationCommandQueues(data == null ? 0 : data.getIntValue("carCount", data.getIntValue("robotCount", 0)));
 
         mq.sendToQueue(
@@ -213,15 +283,33 @@ public class ControllerAgent {
     }
 
     private void handleReset() {
+        // 1. 如果当前有 session，先广播最终快照，再发送带 sessionId 的 RESET
+        String sessionId = currentSessionId;
+        long tick = board.getCurrentTick();
+
+        clearSchedulingRequests();
+
+
         purgeSimulationCommandQueues(board.getCarList().size());
+        // 3. 发送 RESET 事件，带上 sessionId（让 SnapshotRecorder 结束对应 session）
+        Map<String, Object> resetData = new HashMap<>();
+        resetData.put("tick", tick);
+        if (sessionId != null) {
+            resetData.put("sessionId", sessionId);
+        }
+        mq.broadcastEvent(MQKeys.CMD_RESET, resetData);
+
         mq.sendToQueue(
                 MQKeys.TASK_CONFIG_CMD,
                 MQKeys.CMD_FORWARD_RESET,
                 Collections.emptyMap()
         );
 
+        // 5. 清空当前 sessionId，防止后续污染
+        currentSessionId = null;
+
         board.addLogEntry("INFO: Controller forward RESET to TaskConfigurator");
-        mq.broadcastEvent(MQKeys.CMD_RESET, Collections.emptyMap());
+        //mq.broadcastEvent(MQKeys.CMD_RESET, Collections.emptyMap());
     }
 
     private void purgeSimulationCommandQueues(int carCount) {
@@ -232,6 +320,7 @@ public class ControllerAgent {
 
     private void handleStart() {
         purgeSimulationCommandQueues(board.getCarList().size());
+        clearSchedulingRequests();
         // 生成 sessionId
         currentSessionId = java.util.UUID.randomUUID().toString();
         Map<String, String> config = board.getTaskConfig();
@@ -411,6 +500,7 @@ public class ControllerAgent {
         board.appendTrace(carId, board.getCurrentTick(), x, y);
 
         illuminateInitialArea(x, y);
+        registerCarWithRegistry(carId, y, x);
 
         board.addLogEntry("INFO: ADD_CAR success: " + carId + " at (" + x + "," + y + ")");
         broadcastSnapshot(board.getCurrentTick());
@@ -464,7 +554,18 @@ public class ControllerAgent {
 
         board.appendTrace(carId, board.getCurrentTick(), x, y);
         illuminateInitialArea(x, y);
+        registerCarWithRegistry(carId, y, x);
         return true;
+    }
+
+    private void registerCarWithRegistry(String carId, int row, int col) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("entityType", "CAR");
+        data.put("carId", carId);
+        data.put("row", row);
+        data.put("col", col);
+        data.put("status", CarStatus.IDLE.name());
+        mq.sendToQueue(MQKeys.REGISTRY_CMD, MQKeys.CMD_REGISTER, data);
     }
 
     private boolean isFreeForCar(int x, int y) {
@@ -487,18 +588,7 @@ public class ControllerAgent {
     }
 
     private void illuminateInitialArea(int x, int y) {
-        int radius = RedisKeys.VISION_RANGE;
-
-        for (int dy = -radius; dy <= radius; dy++) {
-            for (int dx = -radius; dx <= radius; dx++) {
-                int nx = x + dx;
-                int ny = y + dy;
-
-                if (isInMap(nx, ny)) {
-                    board.exploreCell(ny, nx);
-                }
-            }
-        }
+        board.revealVision(x, y, RedisKeys.VISION_RANGE);
     }
 
     // =========================================================
@@ -532,8 +622,15 @@ public class ControllerAgent {
         if (assignedCars == null) {
             String carId = data.getString("carId");
             if (carId != null) {
-                board.setStatus(carId, CarStatus.WAITING_ROUTE.name());
-                board.addLogEntry("INFO: target assigned: " + carId);
+                targetRequestsInFlight.remove(carId);
+                boolean assigned = !data.containsKey("assigned") || data.getBooleanValue("assigned");
+                if (assigned) {
+                    board.setStatus(carId, CarStatus.WAITING_ROUTE.name());
+                    board.addLogEntry("INFO: target assigned: " + carId);
+                } else {
+                    board.setStatus(carId, CarStatus.IDLE.name());
+                    board.addLogEntry("WARN: target not assigned: " + carId + ", reason=" + data.getString("reason"));
+                }
             }
             return;
         }
@@ -543,8 +640,15 @@ public class ControllerAgent {
             String carId = car.getString("carId");
 
             if (carId != null && board.carExists(carId)) {
-                board.setStatus(carId, CarStatus.WAITING_ROUTE.name());
-                board.addLogEntry("INFO: target assigned: " + carId);
+                targetRequestsInFlight.remove(carId);
+                boolean assigned = !car.containsKey("assigned") || car.getBooleanValue("assigned");
+                if (assigned) {
+                    board.setStatus(carId, CarStatus.WAITING_ROUTE.name());
+                    board.addLogEntry("INFO: target assigned: " + carId);
+                } else {
+                    board.setStatus(carId, CarStatus.IDLE.name());
+                    board.addLogEntry("WARN: target not assigned: " + carId + ", reason=" + car.getString("reason"));
+                }
             }
         }
     }
@@ -552,6 +656,10 @@ public class ControllerAgent {
     private void handleRoutePlanned(JSONObject data) {
         String carId = data.getString("carId");
         boolean routeFound = data.getBooleanValue("routeFound");
+
+        if (carId != null) {
+            routeRequestsInFlight.remove(carId);
+        }
 
         if (carId == null || !board.carExists(carId)) {
             return;
@@ -576,6 +684,10 @@ public class ControllerAgent {
         int x = data.getIntValue("x");
         int y = data.getIntValue("y");
 
+        if (carId != null) {
+            moveRequestsInFlight.remove(carId);
+        }
+
         board.addLogEntry("INFO: " + carId + " moved to (" + x + "," + y + ")");
         mq.broadcastEvent(MQKeys.CMD_MOVED, jsonObjectToMap(data));
     }
@@ -585,6 +697,9 @@ public class ControllerAgent {
         if (carId == null || !board.carExists(carId)) {
             return;
         }
+
+        routeRequestsInFlight.remove(carId);
+        moveRequestsInFlight.remove(carId);
 
         board.clearRoute(carId);
         board.incrementBlockedCount(carId);
@@ -601,6 +716,10 @@ public class ControllerAgent {
         if (carId == null || !board.carExists(carId)) {
             return;
         }
+
+        targetRequestsInFlight.remove(carId);
+        routeRequestsInFlight.remove(carId);
+        moveRequestsInFlight.remove(carId);
 
         board.clearTarget(carId);
         board.clearRoute(carId);
@@ -623,7 +742,9 @@ public class ControllerAgent {
         long currentTick = board.getCurrentTick();
 
         if (!TaskStatus.RUNNING.name().equals(taskStatus)) {
-            broadcastSnapshot(currentTick);
+            if (currentSessionId == null) {
+                broadcastSnapshot(currentTick);
+            }
             return;
         }
 
@@ -632,42 +753,90 @@ public class ControllerAgent {
 
         double coverage = board.getExploredPercent();
         if (coverage >= 99.999) {
+
             config.put("taskStatus", TaskStatus.FINISHED.name());
             board.setTaskConfig(config);
 
             board.addLogEntry("INFO: task finished, coverage=" + coverage);
-            // 广播任务完成事件
-            mq.broadcastEvent(MQKeys.CMD_TASK_FINISHED, Map.of("tick", currentTick));
+
             broadcastSnapshot(currentTick);
+
+            Map<String, Object> finishData = new HashMap<>();
+            finishData.put("tick", currentTick);
+            if (currentSessionId != null) {
+                finishData.put("sessionId", currentSessionId);
+            }
+            mq.broadcastEvent(MQKeys.CMD_TASK_FINISHED, finishData);
+            currentSessionId = null;
+
             return;
         }
 
         List<String> cars = board.getCarList();
+        List<String> idleCars = new ArrayList<>();
+        long now = System.currentTimeMillis();
+        int routeRequestsSent = 0;
+        int maxRouteRequestsPerTick = getIntConfig(config, "maxRouteRequestsPerTick", 5);
         for (String carId : cars) {
-            dispatchCar(carId, config, currentTick);
+            if (CarStatus.IDLE.name().equals(board.getStatus(carId))) {
+                if (claimRequest(targetRequestsInFlight, carId, now)) {
+                    idleCars.add(carId);
+                }
+            } else {
+                if (dispatchCar(carId, config, currentTick, routeRequestsSent < maxRouteRequestsPerTick)) {
+                    routeRequestsSent++;
+                }
+            }
+        }
+        if (!idleCars.isEmpty()) {
+            try {
+                mq.assignTargets(idleCars);
+            } catch (RuntimeException e) {
+                idleCars.forEach(targetRequestsInFlight::remove);
+                throw e;
+            }
         }
 
         board.saveCoverageHistory(currentTick, coverage);
         broadcastSnapshot(currentTick);
     }
 
-    private void dispatchCar(String carId, Map<String, String> config, long currentTick) {
+    private boolean dispatchCar(String carId, Map<String, String> config, long currentTick, boolean canSendRouteRequest) {
         String status = board.getStatus(carId);
 
         if (status == null) {
-            return;
+            return false;
         }
 
-        if (CarStatus.IDLE.name().equals(status)) {
-            mq.assignTarget(carId);
-        } else if (CarStatus.WAITING_ROUTE.name().equals(status)) {
-            String algorithm = config.getOrDefault("algorithm", "BFS");
-            mq.planRoute(carId, algorithm);
+        if (CarStatus.WAITING_ROUTE.name().equals(status)) {
+            if (!canSendRouteRequest) {
+                return false;
+            }
+            long now = System.currentTimeMillis();
+            if (claimRequest(routeRequestsInFlight, carId, now)) {
+                String algorithm = config.getOrDefault("algorithm", "A_STAR");
+                try {
+                    mq.planRoute(carId, algorithm);
+                    return true;
+                } catch (RuntimeException e) {
+                    routeRequestsInFlight.remove(carId);
+                    throw e;
+                }
+            }
         } else if (CarStatus.READY.name().equals(status)) {
-            mq.sendTickMove(carId);
+            long now = System.currentTimeMillis();
+            if (claimRequest(moveRequestsInFlight, carId, now)) {
+                try {
+                    mq.sendTickMove(carId);
+                } catch (RuntimeException e) {
+                    moveRequestsInFlight.remove(carId);
+                    throw e;
+                }
+            }
         } else if (CarStatus.BLOCKED.name().equals(status)) {
             handleBlockedTimeout(carId, currentTick);
         }
+        return false;
     }
 
     private void handleBlockedTimeout(String carId, long currentTick) {
@@ -687,11 +856,52 @@ public class ControllerAgent {
     // 工具方法
     // =========================================================
 
+    private boolean claimRequest(Map<String, Long> requests, String carId, long now) {
+        Long sentAt = requests.putIfAbsent(carId, now);
+        if (sentAt == null) {
+            return true;
+        }
+
+        if (now - sentAt < REQUEST_RETRY_TIMEOUT_MS) {
+            return false;
+        }
+
+        boolean claimed = requests.replace(carId, sentAt, now);
+        if (claimed) {
+            board.addLogEntry("WARN: request timeout, retry: " + carId);
+        }
+        return claimed;
+    }
+
+    private void clearSchedulingRequests() {
+        targetRequestsInFlight.clear();
+        routeRequestsInFlight.clear();
+        moveRequestsInFlight.clear();
+    }
+
+    private int getIntConfig(Map<String, String> config, String key, int defaultValue) {
+        if (config == null) {
+            return defaultValue;
+        }
+        String value = config.get(key);
+        if (value == null || value.isBlank()) {
+            return defaultValue;
+        }
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            return defaultValue;
+        }
+    }
+
     private void broadcastSnapshot(long tick) {
         SimState snapshot = buildCurrentSnapshot(tick);
         Map<String, Object> data = new HashMap<>();
         data.put("tick", tick);
         data.put("stateJson", snapshot.toJson());
+        if (currentSessionId != null) {
+            data.put("sessionId", currentSessionId);
+        }
         mq.broadcastEvent(MQKeys.CMD_REFRESH_ALL, data);
     }
 

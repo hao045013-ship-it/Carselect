@@ -19,6 +19,7 @@ public class TargetSelectionContext {
     private final Set<Position> occupiedByCars;
     private final Set<Position> reservedTargets;
     private final Set<Position> knownObstacles;
+    private final Region preferredRegion;
 
     public TargetSelectionContext(String carId,
                                   Position carPosition,
@@ -38,6 +39,18 @@ public class TargetSelectionContext {
                                   Set<Position> occupiedByCars,
                                   Set<Position> reservedTargets,
                                   Set<Position> knownObstacles) {
+        this(carId, carPosition, explored, mapWidth, mapHeight, occupiedByCars, reservedTargets, knownObstacles, null);
+    }
+
+    public TargetSelectionContext(String carId,
+                                  Position carPosition,
+                                  boolean[] explored,
+                                  int mapWidth,
+                                  int mapHeight,
+                                  Set<Position> occupiedByCars,
+                                  Set<Position> reservedTargets,
+                                  Set<Position> knownObstacles,
+                                  Region preferredRegion) {
         this.carId = carId;
         this.carPosition = carPosition;
         this.explored = explored;
@@ -46,6 +59,7 @@ public class TargetSelectionContext {
         this.occupiedByCars = occupiedByCars == null ? Collections.emptySet() : occupiedByCars;
         this.reservedTargets = reservedTargets == null ? Collections.emptySet() : reservedTargets;
         this.knownObstacles = knownObstacles == null ? Collections.emptySet() : knownObstacles;
+        this.preferredRegion = preferredRegion;
     }
 
     public String getCarId() {
@@ -78,5 +92,9 @@ public class TargetSelectionContext {
 
     public Set<Position> getKnownObstacles() {
         return knownObstacles;
+    }
+
+    public Region getPreferredRegion() {
+        return preferredRegion;
     }
 }

@@ -147,7 +147,7 @@ public class SimWebSocketServer extends WebSocketServer {
         if (map.containsKey("density") && !map.containsKey("obstacleDensity")) {
             map.put("obstacleDensity", map.get("density"));
         }
-        map.putIfAbsent("algorithm", "BFS");
+        map.putIfAbsent("algorithm", "A_STAR");
         return map;
     }
 

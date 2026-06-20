@@ -26,9 +26,6 @@ public class EventLogWriter {
     /** 当前 SQL 会话 ID，未开始时为 null */
     private String currentSessionId;
 
-    /** 是否已写入会话结束时间（覆盖率到100%即为true，避免RESET覆盖） */
-    private boolean sessionEnded = false;
-
     /** 记录每辆车上一位置，用于计算 newCells */
     private final Map<String, int[]> lastPositions = new ConcurrentHashMap<>();
 
@@ -69,20 +66,18 @@ public class EventLogWriter {
 
         if (MQKeys.CMD_START.equals(cmd)) {
             currentSessionId = data == null ? null : data.getString("sessionId");
-            sessionEnded = false;
 
             return;
         }
 
-        if (MQKeys.CMD_RESET.equals(cmd)) {
-            if (currentSessionId != null) {
-                // 覆盖率到100%时已经end过，不再覆盖
-                if (!sessionEnded) {
-                    sqlPersistence.endSession(currentSessionId, timestamp);
-                }
+        if (MQKeys.CMD_RESET.equals(cmd) || MQKeys.CMD_TASK_FINISHED.equals(cmd)) {
+            String eventSessionId = data == null ? null : data.getString("sessionId");
+            if (currentSessionId != null
+                    && eventSessionId != null
+                    && eventSessionId.equals(currentSessionId)) {
+                sqlPersistence.endSession(currentSessionId, timestamp);
                 currentSessionId = null;
             }
-            sessionEnded = false;
             return;
         }
 
@@ -114,15 +109,6 @@ public class EventLogWriter {
                     entry.getInteger("x"),
                     entry.getInteger("y"),
                     entry.getJSONObject("extra").toJSONString());
-
-            // 覆盖率到100%时立刻结束会话，不等RESET
-            if (!sessionEnded && "SNAPSHOT".equals(entry.getString("type"))) {
-                double coverage = board.getExploredPercent();
-                if (coverage >= 100.0) {
-                    sqlPersistence.endSession(currentSessionId, timestamp);
-                    sessionEnded = true;
-                }
-            }
         }
     }
 

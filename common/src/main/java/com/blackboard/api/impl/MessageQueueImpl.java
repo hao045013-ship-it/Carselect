@@ -9,10 +9,11 @@ import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.Connection;
 import com.rabbitmq.client.ConnectionFactory;
 import com.rabbitmq.client.DeliverCallback;
+import com.rabbitmq.client.MessageProperties;
 
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * 消息队列实现类 —— 封装所有 RabbitMQ 操作
@@ -29,8 +30,12 @@ public class MessageQueueImpl implements MessageQueue {
     private final String host;
     private final int port;
     private Connection connection;
+    // channel 只用于发布、声明和清理队列，消费者使用独立 Channel。
     private Channel channel;
     private int lastDeclaredCarCount = 0;
+    private final List<Channel> consumerChannels = new CopyOnWriteArrayList<>();
+    private final Map<String, MessageListener> durableSubscriptions = new ConcurrentHashMap<>();
+    private final List<MessageListener> updateViewSubscriptions = new CopyOnWriteArrayList<>();
 
     public MessageQueueImpl(String host, int port) {
         this.host = host;
@@ -40,9 +45,16 @@ public class MessageQueueImpl implements MessageQueue {
     @Override
     public void connect() {
         try {
+            if (connection != null && connection.isOpen() && channel != null && channel.isOpen()) {
+                return;
+            }
             ConnectionFactory factory = new ConnectionFactory();
             factory.setHost(host);
             factory.setPort(port);
+            factory.setAutomaticRecoveryEnabled(true);
+            factory.setTopologyRecoveryEnabled(true);
+            factory.setNetworkRecoveryInterval(5000);
+            factory.setRequestedHeartbeat(30);
             connection = factory.newConnection();
             channel = connection.createChannel();
             System.out.println("Connected to RabbitMQ at " + host + ":" + port);
@@ -81,6 +93,12 @@ public class MessageQueueImpl implements MessageQueue {
     @Override
     public void close() {
         try {
+            for (Channel consumerChannel : consumerChannels) {
+                if (consumerChannel != null && consumerChannel.isOpen()) {
+                    consumerChannel.close();
+                }
+            }
+            consumerChannels.clear();
             if (channel != null) channel.close();
             if (connection != null) connection.close();
         } catch (Exception e) {
@@ -92,11 +110,11 @@ public class MessageQueueImpl implements MessageQueue {
     private void publish(String routingKey, String message) {
         try {
             ensureOpenChannel();
-            channel.basicPublish("", routingKey, null, message.getBytes("UTF-8"));
+            channel.basicPublish("", routingKey, MessageProperties.PERSISTENT_TEXT_PLAIN, message.getBytes("UTF-8"));
         } catch (Exception e) {
             try {
                 reconnect();
-                channel.basicPublish("", routingKey, null, message.getBytes("UTF-8"));
+                channel.basicPublish("", routingKey, MessageProperties.PERSISTENT_TEXT_PLAIN, message.getBytes("UTF-8"));
             } catch (Exception retryError) {
                 throw new RuntimeException("Failed to publish message to " + routingKey, retryError);
             }
@@ -124,12 +142,37 @@ public class MessageQueueImpl implements MessageQueue {
     }
 
     private synchronized void reconnect() {
-        closeQuietly();
-        connect();
-        declareAllQueues(lastDeclaredCarCount);
+        try {
+            // 发布 Channel 异常时只重建发布 Channel，不能关闭消费者连接。
+            if (connection != null && connection.isOpen()) {
+                if (channel != null && channel.isOpen()) {
+                    channel.close();
+                }
+                channel = connection.createChannel();
+                declareAllQueues(lastDeclaredCarCount);
+                return;
+            }
+
+            // 整个连接失效时，创建新连接并恢复所有消费者。
+            closeQuietly();
+            connect();
+            declareAllQueues(lastDeclaredCarCount);
+            restoreSubscriptions();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to reconnect to RabbitMQ", e);
+        }
     }
 
     private void closeQuietly() {
+        for (Channel consumerChannel : consumerChannels) {
+            try {
+                if (consumerChannel != null && consumerChannel.isOpen()) {
+                    consumerChannel.close();
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        consumerChannels.clear();
         try {
             if (channel != null && channel.isOpen()) {
                 channel.close();
@@ -167,6 +210,14 @@ public class MessageQueueImpl implements MessageQueue {
         Map<String, Object> data = new HashMap<>();
         data.put("carId", carId);
         publish(MQKeys.TARGET_PLANNER_CMD, buildMessage(MQKeys.CMD_ASSIGN_TARGET, data));
+    }
+
+    //新增
+    @Override
+    public void assignTargets(List<String> carIds) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("carIds", carIds == null ? Collections.emptyList() : new ArrayList<>(carIds));
+        publish(MQKeys.TARGET_PLANNER_CMD, buildMessage(MQKeys.CMD_ASSIGN_TARGETS, data));
     }
 
     @Override
@@ -302,15 +353,8 @@ public class MessageQueueImpl implements MessageQueue {
     //有改动
     @Override
     public void subscribeUpdateView(MessageListener listener) {
-        try {
-            //String queueName = channel.queueDeclare().getQueue();
-            // 改动说明：传空字符串让 RabbitMQ 生成合法队列名（不带 amq. 前缀）
-            String queueName = channel.queueDeclare("", false, true, true, null).getQueue();
-            channel.queueBind(queueName, MQKeys.EXCHANGE_UPDATE_VIEW, "");
-            subscribe(queueName, listener);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to subscribe UpdateView", e);
-        }
+        updateViewSubscriptions.add(listener);
+        subscribeUpdateViewInternal(listener);
     }
 
     @Override
@@ -325,17 +369,56 @@ public class MessageQueueImpl implements MessageQueue {
 
     // 有改动==================== 通用订阅 ====================
     private void subscribe(String queueName, MessageListener listener) {
+        durableSubscriptions.put(queueName, listener);
+        subscribeOnNewChannel(queueName, listener);
+    }
+
+    private void subscribeOnNewChannel(String queueName, MessageListener listener) {
         try {
-            // 确保队列存在（如果不存在则创建）
-            //channel.queueDeclare(queueName, true, false, false, null);
+            ensureOpenChannel();
+            Channel consumerChannel = connection.createChannel();
+            consumerChannel.queueDeclare(queueName, true, false, false, null);
+            consumerChannel.basicQos(1);
             DeliverCallback deliverCallback = (consumerTag, delivery) -> {
                 String message = new String(delivery.getBody(), "UTF-8");
-                listener.onMessage(message);
+                try {
+                    listener.onMessage(message);
+                    consumerChannel.basicAck(delivery.getEnvelope().getDeliveryTag(), false);
+                } catch (Exception e) {
+                    System.err.println("RabbitMQ listener failed on " + queueName + ": " + e.getMessage());
+                    consumerChannel.basicNack(delivery.getEnvelope().getDeliveryTag(), false, true);
+                }
             };
-            channel.basicConsume(queueName, true, deliverCallback, consumerTag -> {});
+            consumerChannel.basicConsume(queueName, false, deliverCallback,
+                    consumerTag -> System.err.println("RabbitMQ consumer cancelled: " + queueName));
+            consumerChannel.addShutdownListener(cause ->
+                    System.err.println("RabbitMQ consumer channel closed: " + queueName + ", " + cause.getMessage()));
+            consumerChannels.add(consumerChannel);
         } catch (Exception e) {
             throw new RuntimeException("Failed to subscribe to " + queueName, e);
         }
+    }
+
+    private void subscribeUpdateViewInternal(MessageListener listener) {
+        try {
+            ensureOpenChannel();
+            Channel consumerChannel = connection.createChannel();
+            consumerChannel.exchangeDeclare(MQKeys.EXCHANGE_UPDATE_VIEW, "fanout", true);
+            String queueName = consumerChannel.queueDeclare("", false, true, true, null).getQueue();
+            consumerChannel.queueBind(queueName, MQKeys.EXCHANGE_UPDATE_VIEW, "");
+            DeliverCallback callback = (consumerTag, delivery) ->
+                    listener.onMessage(new String(delivery.getBody(), "UTF-8"));
+            consumerChannel.basicConsume(queueName, true, callback,
+                    consumerTag -> System.err.println("UpdateView consumer cancelled"));
+            consumerChannels.add(consumerChannel);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to subscribe UpdateView", e);
+        }
+    }
+
+    private void restoreSubscriptions() {
+        durableSubscriptions.forEach(this::subscribeOnNewChannel);
+        updateViewSubscriptions.forEach(this::subscribeUpdateViewInternal);
     }
 
     // ==================== 通用命令发送 ====================

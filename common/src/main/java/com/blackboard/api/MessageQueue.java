@@ -1,5 +1,6 @@
 package com.blackboard.api;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -16,6 +17,7 @@ public interface MessageQueue {
     // ==================== Controller → 知识源（命令下发） ====================
     void sendTickMove(String carId);
     void assignTarget(String carId);
+    void assignTargets(List<String> carIds);//新增
     void planRoute(String carId, String algorithm);
     void forwardConfig(Map<String, String> config);
     void forwardReset();

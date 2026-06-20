@@ -14,12 +14,14 @@ import java.util.Set;
  */
 public class GreedyTargetSelector implements TargetSelector {
     private static final int DEFAULT_CONGESTION_RADIUS = 2;
+    private static final double DEFAULT_REGION_OUTSIDE_PENALTY = 4.0;
 
     private final String strategyName;
     private final double distanceWeight;
     private final double informationGainWeight;
     private final double congestionWeight;
     private final int congestionRadius;
+    private final double regionOutsidePenalty;
 
     public GreedyTargetSelector() {
         this("GREEDY", 1.0, 0.0, 3.0, DEFAULT_CONGESTION_RADIUS);
@@ -30,11 +32,22 @@ public class GreedyTargetSelector implements TargetSelector {
                                    double informationGainWeight,
                                    double congestionWeight,
                                    int congestionRadius) {
+        this(strategyName, distanceWeight, informationGainWeight, congestionWeight,
+                congestionRadius, DEFAULT_REGION_OUTSIDE_PENALTY);
+    }
+
+    protected GreedyTargetSelector(String strategyName,
+                                   double distanceWeight,
+                                   double informationGainWeight,
+                                   double congestionWeight,
+                                   int congestionRadius,
+                                   double regionOutsidePenalty) {
         this.strategyName = strategyName;
         this.distanceWeight = distanceWeight;
         this.informationGainWeight = informationGainWeight;
         this.congestionWeight = congestionWeight;
         this.congestionRadius = congestionRadius;
+        this.regionOutsidePenalty = regionOutsidePenalty;
     }
 
     /**
@@ -78,18 +91,32 @@ public class GreedyTargetSelector implements TargetSelector {
 
         Position selected = filtered.stream()
                 .min(Comparator
-                        .comparingDouble((Position p) -> score(context.getCarPosition(), p, context.getOccupiedByCars(), context.getExplored(), context.getMapWidth(), context.getMapHeight()))
+                        .comparingDouble((Position p) -> score(context, p))
                         .thenComparingInt(Position::getY)
                         .thenComparingInt(Position::getX))
                 .orElse(null);
 
-        double selectedScore = selected == null ? Double.NaN : score(context.getCarPosition(), selected, context.getOccupiedByCars(), context.getExplored(), context.getMapWidth(), context.getMapHeight());
+        double selectedScore = selected == null ? Double.NaN : score(context, selected);
         int gain = selected == null ? 0 : informationGain(selected, context.getExplored(), context.getMapWidth(), context.getMapHeight());
         TargetSelectionMetrics metrics = metrics(frontier.size(), candidateCount, filtered.size(), context, selectedScore, gain, begin);
         if (selected == null) {
             return TargetSelectionDecision.notAssigned("no_candidate_after_scoring", metrics);
         }
         return TargetSelectionDecision.assigned(selected, metrics);
+    }
+
+    protected double score(TargetSelectionContext context, Position candidate) {
+        double baseScore = score(
+                context.getCarPosition(),
+                candidate,
+                context.getOccupiedByCars(),
+                context.getExplored(),
+                context.getMapWidth(),
+                context.getMapHeight());
+        if (context.getPreferredRegion() == null || context.getPreferredRegion().contains(candidate)) {
+            return baseScore;
+        }
+        return baseScore + regionOutsidePenalty;
     }
 
     protected double score(Position carPosition,

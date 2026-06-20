@@ -69,10 +69,11 @@ public class NavigatorDataReader {
     public Set<Position> readKnownStaticObstacles(int mapWidth, int mapHeight) {
         Set<Position> result = new HashSet<>();
         boolean[] explored = board.getFullMapView();
+        boolean[] staticBlocks = board.getFullStaticBlock();
         for (int y = 0; y < mapHeight; y++) {
             for (int x = 0; x < mapWidth; x++) {
                 if (!isExplored(explored, x, y, mapWidth)) continue;
-                if (board.hasObstacle(y, x)) {
+                if (isBlocked(staticBlocks, x, y, mapWidth)) {
                     result.add(new Position(x, y));
                 }
             }
@@ -99,5 +100,11 @@ public class NavigatorDataReader {
         if (explored == null) return false;
         int idx = y * mapWidth + x;
         return idx >= 0 && idx < explored.length && explored[idx];
+    }
+
+    private boolean isBlocked(boolean[] blocks, int x, int y, int mapWidth) {
+        if (blocks == null) return false;
+        int idx = y * mapWidth + x;
+        return idx >= 0 && idx < blocks.length && blocks[idx];
     }
 }
